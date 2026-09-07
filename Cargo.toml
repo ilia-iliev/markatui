@@ -1,0 +1,23 @@
+[package]
+name = "markatui"
+version = "0.1.0"
+edition = "2024"
+# harper-core needs a compiler that infers an array of function items as the pointer type
+# the call expects; 1.92 does not, and stops with a type error inside harper itself.
+rust-version = "1.95"
+
+[dependencies]
+crossterm = { version = "0.29", features = ["osc52"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }
+unicode-segmentation = "1"
+unicode-width = "0.2"
+# The checker crosses threads, so Harper's concurrent representation is required. Its
+# thesaurus is not; suggestions used here come from lint rules and the spelling index.
+harper-core = { version = "2.8", default-features = false, features = ["concurrent"] }
+pulldown-cmark = "0.13.4"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
