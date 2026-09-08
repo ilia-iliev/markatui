@@ -21,11 +21,6 @@ ratatui-image = { version = "11", default-features = false, features = ["crosste
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 
-[dev-dependencies]
-# A screen test draws a picture, and a picker is the only way to ask for one. The mosaic
-# is the picker a test can make: it asks the terminal nothing, because there is none.
-ratatui-image = { version = "11", default-features = false, features = ["crossterm"] }
-
 [profile.release]
 lto = "thin"
 codegen-units = 1
