@@ -435,7 +435,10 @@ mod tests {
         let rows = until_the_picture_lands(&mut app, &mut terminal);
 
         assert!(rows.iter().filter(|row| row.contains('▄')).count() >= 6, "{rows:#?}");
-        assert_eq!(rows[14], "", "the picture ran into the foot of the screen: {rows:#?}");
+        assert!(
+            !rows[14].contains('▄'),
+            "the picture ran into the foot of the screen: {rows:#?}"
+        );
         forget(&path);
     }
 
@@ -471,6 +474,19 @@ mod tests {
         assert!(!app.grammar);
         assert!(rows.iter().any(|row| row.trim() == "A heading"), "{rows:#?}");
         assert!(!rows.iter().any(|row| row.contains('#') || row.contains("**")), "{rows:#?}");
+        forget(&path);
+    }
+
+    #[test]
+    fn says_which_mode_the_writer_is_in() {
+        let path = document("modes", "A document.\n");
+        let mut app = app(&path);
+
+        assert_eq!(app.footer(40), vec!["grammar off".to_string()]);
+        app.act(Action::ToggleReading);
+        assert_eq!(app.footer(40), vec!["reading".to_string()]);
+        app.act(Action::ToggleGrammar);
+        assert!(app.footer(40).is_empty(), "the checker has said nothing yet");
         forget(&path);
     }
 

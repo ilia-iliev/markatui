@@ -6,9 +6,10 @@ use crate::tui::theme;
 
 impl App {
     /// What the foot of the screen says, from the top of the pile down: the question a
-    /// quit asks, the search bar, a file that would not open or save, and what the
-    /// checker makes of where the cursor is standing. Every line of it is drawn in the
-    /// prompt colours, which is what makes the band read as one.
+    /// quit asks, the search bar, a file that would not open or save, the mode the
+    /// writer is in where it is not the plain one, and what the checker makes of where
+    /// the cursor is standing. Every line of it is drawn in the prompt colours, which is
+    /// what makes the band read as one.
     pub(super) fn footer(&self, width: u16) -> Vec<String> {
         if self.mode == Mode::Quitting {
             let question = match &self.editor.error {
@@ -32,8 +33,11 @@ impl App {
         if let Some(error) = &self.editor.error {
             return vec![error.clone()];
         }
+        if self.reading {
+            return vec!["reading".to_string()];
+        }
         if !self.grammar {
-            return Vec::new();
+            return vec!["grammar off".to_string()];
         }
         self.lint_line().into_iter().collect()
     }
