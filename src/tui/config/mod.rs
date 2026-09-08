@@ -2,7 +2,7 @@
 //!
 //! ```toml
 //! content_width = 72
-//! inherit_background = true
+//! theme = "terminal"
 //!
 //! [palette]
 //! accent = "#3E8E62"
@@ -28,7 +28,7 @@ use crate::lint;
 use crate::storage;
 use crate::tui::keys::Keymap;
 
-use crate::tui::theme::Palette;
+use crate::tui::theme::{Palette, Theme};
 use ratatui::style::Color;
 use std::fs;
 use std::io;
@@ -42,8 +42,8 @@ const WIDTHS: std::ops::RangeInclusive<u16> = 20..=500;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub content_width: u16,
-    /// Whether the terminal's own ground shows through. Painting paper of ours over a
-    /// dark terminal jars, so the default is to leave the writer the palette they chose.
+    /// Whether the terminal preset leaves the terminal's own ground and ink visible.
+    /// Kept separately for compatibility with older config files.
     pub inherit_background: bool,
     pub palette: Palette,
     pub keys: Keymap,
@@ -54,13 +54,20 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
+        let (inherit_background, palette) = Theme::Terminal.settings();
         Config {
             content_width: 72,
-            inherit_background: true,
-            palette: Palette::default(),
+            inherit_background,
+            palette,
             keys: Keymap::default(),
             checks: lint::Checks::new(),
         }
+    }
+}
+
+impl Config {
+    fn apply(&mut self, theme: Theme) {
+        (self.inherit_background, self.palette) = theme.settings();
     }
 }
 
@@ -74,6 +81,54 @@ pub fn path() -> Result<PathBuf, String> {
     let directory = path.parent().expect("the config has a config directory");
     fs::create_dir_all(directory).map_err(|error| format!("{}: {error}", directory.display()))?;
     Ok(path)
+}
+
+/// Select a preset for future runs and leave the rest of the config untouched.
+pub fn set_theme(name: &str) -> Result<(), String> {
+    let theme = Theme::parse(name).ok_or_else(|| {
+        format!("there is no theme called {name:?}; choose light, dark, or terminal")
+    })?;
+    let path = path()?;
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+    };
+    storage::write_atomic(&path, theme_in(&text, theme).as_bytes())
+        .map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn theme_in(text: &str, theme: Theme) -> String {
+    let setting = format!("theme = \"{}\"", theme.name());
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let mut in_root = true;
+    let mut found = false;
+    lines.retain_mut(|line| {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_root = false;
+        }
+        if !in_root {
+            return true;
+        }
+        let key = trimmed.split('=').next().map(str::trim);
+        if key == Some("theme") {
+            if !found {
+                *line = setting.clone();
+                found = true;
+                return true;
+            }
+            return false;
+        }
+        // This older setting would otherwise undo a selected preset later in the file.
+        key != Some("inherit_background")
+    });
+    if !found {
+        lines.insert(0, setting);
+    }
+    let mut result = lines.join("\n");
+    result.push('\n');
+    result
 }
 
 /// Read the config and keep it for the rest of the run. What comes back is what could not
@@ -107,7 +162,10 @@ fn read(text: &str) -> (Config, Vec<String>) {
     let mut config = Config::default();
     let mut table = String::new();
     let problems = lines::walk(storage::CONFIG_FILE, text, |line| {
-        if let Some(name) = line.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
             table = name.trim().to_string();
             if !matches!(table.as_str(), "palette" | "checks") {
                 return Err(format!("there is no [{table}] to put anything in"));
@@ -126,6 +184,8 @@ fn set(config: &mut Config, table: &str, key: &str, value: &str) -> Result<(), S
     match table {
         "" => match key {
             "content_width" => config.content_width = width(value)?,
+            "theme" => config.apply(theme(value)?),
+            // Kept for existing config files. A named theme is clearer for new ones.
             "inherit_background" => config.inherit_background = boolean(value)?,
             _ => return Err(unknown(key)),
         },
@@ -153,6 +213,12 @@ fn string(value: &str) -> Result<&str, String> {
     lines::quoted(value).ok_or_else(|| format!("{value} is not in quotes"))
 }
 
+fn theme(value: &str) -> Result<Theme, String> {
+    let name = string(value)?;
+    Theme::parse(name)
+        .ok_or_else(|| format!("{name:?} is not a theme; choose light, dark, or terminal"))
+}
+
 fn boolean(value: &str) -> Result<bool, String> {
     match value {
         "true" => Ok(true),
@@ -162,10 +228,16 @@ fn boolean(value: &str) -> Result<bool, String> {
 }
 
 fn width(value: &str) -> Result<u16, String> {
-    let width: u16 = value.parse().map_err(|_| format!("{value} is not a number"))?;
+    let width: u16 = value
+        .parse()
+        .map_err(|_| format!("{value} is not a number"))?;
     match WIDTHS.contains(&width) {
         true => Ok(width),
-        false => Err(format!("{width} columns is outside {}–{}", WIDTHS.start(), WIDTHS.end())),
+        false => Err(format!(
+            "{width} columns is outside {}–{}",
+            WIDTHS.start(),
+            WIDTHS.end()
+        )),
     }
 }
 
@@ -201,21 +273,114 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_settings_a_writer_would_change() {
+    fn every_display_setting_takes_effect() {
+        use crate::layout::Cell;
+        use crate::style;
+        use crate::tui::{theme, view};
+        use ratatui::layout::Rect;
+        use ratatui::style::Modifier;
+
         let config = read_well(
             r##"
             content_width = 100   # room for a wide screen
             inherit_background = false
 
             [palette]
-            accent = "#112233"
+            accent = "#010101"
+            muted = "#020202"
+            lint = "#030303"
+            lint_ink = "#040404"
+            code = "#050505"
+            prompt = "#060606"
+            prompt_ink = "#070707"
+            paper = "#080808"
+            ink = "#090909"
             "##,
         );
-        assert_eq!(config.content_width, 100);
-        assert!(!config.inherit_background);
-        assert_eq!(config.palette.accent, Color::Rgb(0x11, 0x22, 0x33));
-        // What was not spoken for is still what it was.
-        assert_eq!(config.palette.muted, Palette::default().muted);
+        let colour = |channel| Color::Rgb(channel, channel, channel);
+        let cell = |bits| Cell {
+            text: "x".to_string(),
+            width: 1,
+            bits,
+            source: Some(0),
+        };
+
+        assert_eq!(theme::content_width_for(&config), 100);
+        assert_eq!(
+            view::column_for(Rect::new(10, 0, 200, 1), config.content_width),
+            Rect::new(60, 0, 100, 1)
+        );
+
+        let base = theme::base_for(&config);
+        assert_eq!(base.bg, Some(colour(8)));
+        assert_eq!(base.fg, Some(colour(9)));
+        let mut inherited = config.clone();
+        inherited.inherit_background = true;
+        assert_eq!(
+            theme::base_for(&inherited),
+            ratatui::style::Style::default()
+        );
+
+        let heading = theme::of_for(&config, &cell(style::HEADING), 0);
+        assert_eq!(heading.fg, Some(colour(1)));
+        assert!(heading.add_modifier.contains(Modifier::BOLD));
+        let link = theme::of_for(&config, &cell(style::LINK), 0);
+        assert_eq!(link.fg, Some(colour(1)));
+        assert!(link.add_modifier.contains(Modifier::UNDERLINED));
+        assert_eq!(
+            theme::of_for(&config, &cell(style::MARKER), 0).fg,
+            Some(colour(2))
+        );
+
+        let lint = theme::of_for(&config, &cell(style::LINT), 0);
+        assert_eq!(lint.bg, Some(colour(3)));
+        assert_eq!(lint.fg, Some(colour(4)));
+        assert_eq!(
+            theme::of_for(&config, &cell(0), style::CODE).bg,
+            Some(colour(5))
+        );
+
+        let prompt = theme::prompt_for(&config);
+        assert_eq!(prompt.bg, Some(colour(6)));
+        assert_eq!(prompt.fg, Some(colour(7)));
+    }
+
+    #[test]
+    fn themes_are_presets_and_palette_lines_can_adjust_them() {
+        let light = read_well("theme = \"light\"\n");
+        let dark = read_well("theme = \"dark\"\n");
+        let terminal = read_well("theme = \"terminal\"\n");
+
+        assert!(!light.inherit_background);
+        assert!(!dark.inherit_background);
+        assert!(terminal.inherit_background);
+        assert_ne!(light.palette.paper, dark.palette.paper);
+        assert_ne!(light.palette.ink, dark.palette.ink);
+
+        let adjusted = read_well("theme = \"dark\"\n[palette]\naccent = \"#010203\"\n");
+        assert_eq!(adjusted.palette.accent, Color::Rgb(1, 2, 3));
+        assert_eq!(adjusted.palette.paper, dark.palette.paper);
+    }
+
+    #[test]
+    fn writes_a_theme_at_the_root_and_removes_the_old_background_switch() {
+        let text =
+            "content_width = 80\ninherit_background = true\n\n[palette]\naccent = \"#010203\"\n";
+        assert_eq!(
+            theme_in(text, Theme::Dark),
+            "theme = \"dark\"\ncontent_width = 80\n\n[palette]\naccent = \"#010203\"\n"
+        );
+        assert_eq!(
+            theme_in("theme = \"light\"\n", Theme::Terminal),
+            "theme = \"terminal\"\n"
+        );
+    }
+
+    #[test]
+    fn refuses_an_unknown_theme() {
+        let (_, problems) = read("theme = \"midnight\"\n");
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("light, dark, or terminal"));
     }
 
     #[test]
@@ -232,7 +397,11 @@ mod tests {
         );
         assert_eq!(problems.len(), 3, "{problems:?}");
         assert!(problems[0].contains("line 2"), "{:?}", problems[0]);
-        assert!(problems[1].contains("inherit_backgrund"), "{:?}", problems[1]);
+        assert!(
+            problems[1].contains("inherit_backgrund"),
+            "{:?}",
+            problems[1]
+        );
         assert!(problems[2].contains("[colours]"), "{:?}", problems[2]);
         // The line after the ones it could not read is read all the same.
         assert_eq!(config.palette.muted, Color::Rgb(0, 0, 0));

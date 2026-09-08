@@ -7,12 +7,14 @@ const HELP: &str = "Usage:
   markatui -keymap <command> <key>
   markatui -checks
   markatui -checks on|off <check>
+  markatui theme light|dark|terminal
   markatui -config
 
 Available options:
   -h, --help  Print help
   -keymap     List the keys, or bind one to a command
   -checks     List the writing checks, or turn one on or off
+  -theme      Set light, dark, or terminal colours
   -config     Edit the config file";
 
 fn main() {
@@ -26,6 +28,8 @@ fn main() {
             usage();
         };
         first = path;
+    } else if first == "theme" {
+        return report(theme(arguments));
     } else if let Some(flag) = flag(&first) {
         match flag {
             "h" | "help" => {
@@ -34,6 +38,7 @@ fn main() {
             }
             "checks" => return report(checks(arguments)),
             "keymap" => return report(keymap(arguments)),
+            "theme" => return report(theme(arguments)),
             "config" => return config(arguments),
             _ => invalid_option(&first),
         }
@@ -72,6 +77,13 @@ fn config(mut arguments: impl Iterator<Item = String>) {
     match tui::config::path() {
         Ok(path) => open(&path),
         Err(error) => fail(&error),
+    }
+}
+
+fn theme(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
+    match (arguments.next(), arguments.next()) {
+        (Some(name), None) => tui::config::set_theme(&name),
+        _ => usage(),
     }
 }
 

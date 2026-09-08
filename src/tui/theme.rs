@@ -1,11 +1,6 @@
-//! The colours, and how a cell's style bits turn into one. The Qt front end painted a
-//! warm paper background over the whole window; here the terminal's own ground shows
-//! through instead, so the editor sits in the palette the writer already chose. What is
-//! painted — the accent, the muted grey, the wash under a bad word — is picked to read on
-//! a light terminal and a dark one alike.
-//!
-//! Every colour here is a default the config file can overrule, and
-//! `inherit_background = false` is what puts the paper back.
+//! The colours, and how a cell's style bits turn into one. Light and dark paint the
+//! whole screen; terminal leaves its ground and ink alone. Every preset can be adjusted
+//! in the config file's `[palette]` table.
 
 use crate::layout::Cell;
 use crate::style;
@@ -31,6 +26,10 @@ macro_rules! palette {
         }
 
         impl Palette {
+            const fn rgb($($name: (u8, u8, u8),)*) -> Self {
+                Palette { $($name: Color::Rgb($name.0, $name.1, $name.2),)* }
+            }
+
             /// The colour the config calls `name`.
             pub fn slot(&mut self, name: &str) -> Option<&mut Color> {
                 Some(match name {
@@ -62,40 +61,111 @@ palette! {
     ink = 0x2D, 0x2A, 0x26;
 }
 
-fn palette() -> Palette {
-    config::get().palette
+/// A complete, sensible starting palette. `Terminal` keeps the user's terminal ground
+/// and ink; the other two paint both explicitly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Theme {
+    Light,
+    Dark,
+    Terminal,
+}
+
+impl Theme {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "light" => Some(Self::Light),
+            "dark" => Some(Self::Dark),
+            "terminal" => Some(Self::Terminal),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Dark => "dark",
+            Self::Terminal => "terminal",
+        }
+    }
+
+    pub fn settings(self) -> (bool, Palette) {
+        match self {
+            Self::Light => (
+                false,
+                Palette::rgb(
+                    (0x2F, 0x76, 0x50),
+                    (0x77, 0x6F, 0x65),
+                    (0xF3, 0xE4, 0xC3),
+                    (0x2D, 0x2A, 0x26),
+                    (0xEC, 0xE7, 0xDD),
+                    (0x26, 0x24, 0x1F),
+                    (0xFF, 0xFF, 0xFF),
+                    (0xFA, 0xF6, 0xEC),
+                    (0x2D, 0x2A, 0x26),
+                ),
+            ),
+            Self::Dark => (
+                false,
+                Palette::rgb(
+                    (0x72, 0xC9, 0x97),
+                    (0x9B, 0x94, 0x8A),
+                    (0x6B, 0x4F, 0x1D),
+                    (0xFF, 0xF4, 0xD6),
+                    (0x2C, 0x29, 0x26),
+                    (0x18, 0x17, 0x15),
+                    (0xF5, 0xF1, 0xE8),
+                    (0x21, 0x1F, 0x1C),
+                    (0xE8, 0xE2, 0xD8),
+                ),
+            ),
+            Self::Terminal => (true, Palette::default()),
+        }
+    }
 }
 
 /// How wide the column of text is, in cells. Wider than this and a line of prose is
 /// tiring to read back; the Qt front end held the same measure in pixels.
 pub fn content_width() -> u16 {
-    config::get().content_width
+    content_width_for(config::get())
+}
+
+pub(crate) fn content_width_for(config: &config::Config) -> u16 {
+    config.content_width
 }
 
 /// What the screen is painted on where nothing else has claimed it: the terminal's own
 /// ground, unless the config asked for paper of ours.
 pub fn base() -> Style {
-    let palette = palette();
-    match config::get().inherit_background {
+    base_for(config::get())
+}
+
+pub(crate) fn base_for(config: &config::Config) -> Style {
+    match config.inherit_background {
         true => Style::default(),
-        false => Style::default().bg(palette.paper).fg(palette.ink),
+        false => Style::default()
+            .bg(config.palette.paper)
+            .fg(config.palette.ink),
     }
 }
 
 /// How one cell of a laid-out block is drawn. `row` is what the whole row carries.
 pub fn of(cell: &Cell, row: u16) -> Style {
-    bits(cell.bits | row)
+    of_for(config::get(), cell, row)
+}
+
+pub(crate) fn of_for(config: &config::Config, cell: &Cell, row: u16) -> Style {
+    bits_for(config, cell.bits | row)
 }
 
 /// What a row is drawn on where it has no cell of its own: the ground a fenced block
 /// sits on runs to the edge of the column, not to the end of the shortest line in it.
 pub fn ground(row: u16) -> Style {
-    bits(row)
+    bits_for(config::get(), row)
 }
 
-fn bits(bits: u16) -> Style {
-    let palette = palette();
-    let mut style = base();
+fn bits_for(config: &config::Config, bits: u16) -> Style {
+    let palette = config.palette;
+    let mut style = base_for(config);
     if bits & style::HEADING != 0 {
         style = style.fg(palette.accent).add_modifier(Modifier::BOLD);
     }
@@ -131,6 +201,11 @@ pub fn selected(style: Style) -> Style {
 }
 
 pub fn prompt() -> Style {
-    let palette = palette();
-    Style::default().bg(palette.prompt).fg(palette.prompt_ink)
+    prompt_for(config::get())
+}
+
+pub(crate) fn prompt_for(config: &config::Config) -> Style {
+    Style::default()
+        .bg(config.palette.prompt)
+        .fg(config.palette.prompt_ink)
 }

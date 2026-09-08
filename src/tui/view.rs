@@ -222,7 +222,11 @@ pub fn draw(frame: &mut Frame, area: Rect, editor: &Editor, document: &Document,
 /// The column everything is drawn in: as wide as a line of prose should be, down the
 /// middle of whatever room the terminal gives.
 pub fn column(area: Rect) -> Rect {
-    let width = theme::content_width().min(area.width);
+    column_for(area, theme::content_width())
+}
+
+pub(crate) fn column_for(area: Rect, content_width: u16) -> Rect {
+    let width = content_width.min(area.width);
     Rect { x: area.x + (area.width - width) / 2, width, ..area }
 }
 

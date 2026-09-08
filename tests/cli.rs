@@ -43,6 +43,35 @@ fn unknown_flag_reports_the_available_flags() {
     assert!(stderr.contains("-h, --help"), "{stderr}");
 }
 
+#[test]
+fn theme_command_writes_the_selected_preset_to_config() {
+    let config = std::env::temp_dir().join(format!("markatui-theme-{}", std::process::id()));
+    let output = Command::new(env!("CARGO_BIN_EXE_markatui"))
+        .args(["theme", "dark"])
+        .env("XDG_CONFIG_HOME", &config)
+        .output()
+        .expect("markatui runs");
+
+    assert!(output.status.success(), "{output:?}");
+    let written = std::fs::read_to_string(config.join("markatui/config.toml")).expect("a config");
+    assert_eq!(written, "theme = \"dark\"\n");
+    std::fs::remove_dir_all(config).expect("the temporary config goes");
+}
+
+#[test]
+fn theme_flag_rejects_an_unknown_preset() {
+    let output = Command::new(env!("CARGO_BIN_EXE_markatui"))
+        .args(["-theme", "sepia"])
+        .output()
+        .expect("markatui runs");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("choose light, dark, or terminal"),
+        "{output:?}"
+    );
+}
+
 /// Turning a check off writes it into the config, and the listing then says so. The two
 /// halves are one test because the second only means anything after the first.
 #[test]

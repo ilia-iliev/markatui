@@ -21,13 +21,20 @@ Copy/paste uses to the machine's clipboard.
 
 ## Config
 
-`~/.config/markatui/config.toml`, all of it optional. `markatui -config` opens it in the editor; what it says is read at the next start. What is below is the default:
+`~/.config/markatui/config.toml`, all of it optional. Choose a preset with:
+
+```sh
+markatui theme light
+markatui theme dark
+markatui theme terminal  # inherit the terminal's background and text colour
+```
+
+The choice is written to the config file. `markatui -config` opens that file in the editor; what it says is read at the next start. The default is:
 
 ```toml
 # How wide the column of text is, in cells. 20 to 500.
 content_width = 72
-# Leave the terminal's own background alone. false paints `paper` and `ink` over it.
-inherit_background = true
+theme = "terminal"
 
 [palette]
 accent = "#3E8E62"      # headings and links
@@ -37,11 +44,11 @@ lint_ink = "#2D2A26"
 code = "#3A3733"        # the ground a fenced block sits on
 prompt = "#26241F"      # the band at the foot of the screen
 prompt_ink = "#FFFFFF"
-paper = "#FAF6EC"       # both only used when inherit_background is false
+paper = "#FAF6EC"       # used by the light and dark themes
 ink = "#2D2A26"
 ```
 
-Colours are `"#RRGGBB"`. Checks turned off go in a `[checks]` table; see below. 
+Colours are `"#RRGGBB"`. Palette entries override the chosen preset. Checks turned off go in a `[checks]` table; see below. 
 
 ## Spelling and Grammar
 

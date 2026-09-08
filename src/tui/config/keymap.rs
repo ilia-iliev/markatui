@@ -123,10 +123,21 @@ mod tests {
     }
 
     #[test]
-    fn reads_an_edited_binding() {
+    fn an_edited_binding_changes_what_the_key_does() {
+        use crate::tui::keys::Action;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
         let (keymap, problems) = read("find = \"alt+f\"\n");
         assert!(problems.is_empty(), "{problems:?}");
         assert!(render(&keymap).contains("find = \"alt+f\""));
+        assert_eq!(
+            keymap.command(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT)),
+            Some(Action::OpenSearch)
+        );
+        assert_ne!(
+            keymap.command(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)),
+            Some(Action::OpenSearch)
+        );
     }
 
     #[test]
