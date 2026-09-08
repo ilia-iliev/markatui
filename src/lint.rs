@@ -1,11 +1,11 @@
 use crate::parse;
 use crate::spell;
 use crate::text::char_at;
-use harper_core::linting::{LintGroup, LintKind, Linter, Suggestion};
-use harper_core::spell::FstDictionary;
+use harper_core::linting::{FlatConfig, LintGroup, LintKind, Suggestion};
+use harper_core::spell::{FstDictionary, MutableDictionary};
 use harper_core::{Dialect, Document, TokenKind};
 use pulldown_cmark::{Event, Parser, Tag};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
@@ -27,6 +27,9 @@ pub struct Lint {
     /// be taking into their dictionary. Empty for a turn of phrase, which is nothing a
     /// dictionary has an opinion about.
     pub word: String,
+    /// Which of the checker's rules objected, by the name the config turns it off under.
+    /// Empty for a misspelling: that is the dictionary's business and no rule of ours.
+    pub rule: String,
     /// Whether the replacements are still to be worked out. Asking the dictionary what a
     /// misspelled word should have been costs more than checking the block it is in, and
     /// only the one lint the cursor stands in is ever read.
@@ -41,6 +44,40 @@ const JOINS: [char; 5] = ['.', '/', ':', '@', '_'];
 
 const CACHE_LIMIT: usize = 256;
 
+/// What the writer's config had to say about the checker's rules: the name of a rule, and
+/// whether it is to run. Only the ones spoken for are in here; the rest stay as curated.
+pub type Checks = BTreeMap<String, bool>;
+
+/// Turn the writer's rules on and off, then take the spell checker out whatever they
+/// said: personal words and lazy suggestions need the spelling pass this file does
+/// itself, and running harper's as well would mark the same word twice.
+fn configure(config: &mut FlatConfig, checks: &Checks) {
+    for (rule, on) in checks {
+        config.set_rule_enabled(rule, *on);
+    }
+    config.set_rule_enabled("SpellCheck", false);
+}
+
+/// Whether the checker has a rule of this name, so that a config naming one it does not
+/// have is a line the editor complains about rather than a check quietly left on.
+pub fn has_rule(name: &str) -> bool {
+    FlatConfig::new_curated().has_rule(name)
+}
+
+/// Every rule the writer could turn off, each with the one line harper says about what it
+/// looks for. Built here and thrown away: this is what `markatui checks` prints, and it
+/// waits on nothing. The dictionary a rule would read does not change its name.
+pub fn rules() -> Vec<(String, String)> {
+    let group = LintGroup::new_curated(MutableDictionary::new().into(), Dialect::American);
+    let mut listed: Vec<(String, String)> = group
+        .all_descriptions()
+        .into_iter()
+        .map(|(name, description)| (name.to_string(), description.to_string()))
+        .collect();
+    listed.sort();
+    listed
+}
+
 type CheckKey = String;
 
 struct CheckCache {
@@ -50,7 +87,6 @@ struct CheckCache {
 }
 
 struct Checker {
-    #[cfg(test)]
     group: Arc<Mutex<LintGroup>>,
     cache: Arc<Mutex<CheckCache>>,
     requests: mpsc::Sender<CheckKey>,
@@ -60,14 +96,14 @@ static CHECKER: OnceLock<Checker> = OnceLock::new();
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Build the checker on threads of its own, so that the four hundred milliseconds it
-/// takes are spent while the first frame is being drawn.
-pub fn preload() {
+/// takes are spent while the first frame is being drawn. `checks` is what the writer's
+/// config had to say about the rules, by the names [`rules`] prints.
+pub fn preload(checks: &Checks) {
     spell::preload();
-    std::thread::spawn(|| {
+    let checks = checks.clone();
+    std::thread::spawn(move || {
         let mut rules = LintGroup::new_curated(FstDictionary::curated(), Dialect::American);
-        // Personal words and lazy suggestions need the spelling pass below. Do not also
-        // run Harper's spell checker only to throw every one of its results away.
-        rules.config.set_rule_enabled("SpellCheck", false);
+        configure(&mut rules.config, &checks);
 
         let group = Arc::new(Mutex::new(rules));
         let cache = Arc::new(Mutex::new(CheckCache {
@@ -78,7 +114,6 @@ pub fn preload() {
         let (send, receive) = mpsc::channel();
         if CHECKER
             .set(Checker {
-                #[cfg(test)]
                 group: group.clone(),
                 cache: cache.clone(),
                 requests: send,
@@ -175,17 +210,36 @@ pub fn at(text: &str, cursor: usize) -> Option<Lint> {
     Some(found)
 }
 
-/// Take a word into the writer's own dictionary, and forget what was made of the block it
-/// was found in: it is spelled right from here on, and the block is asked about again.
+/// Take a word into the writer's own dictionary: it is spelled right from here on, in
+/// this document and the next.
 pub fn learn(word: &str) {
     spell::learn(word);
-    if let Some(checker) = CHECKER.get() {
-        let mut cache = checker.cache.lock().unwrap();
-        cache.found.clear();
-        cache.order.clear();
-        cache.pending.clear();
-        GENERATION.fetch_add(1, Ordering::Release);
-    }
+    start_over();
+}
+
+/// Stop running the rule called `name` for the rest of this run. Keeping it off past the
+/// end of it is the config's business; this is what the editor does about the tip that is
+/// on the screen when the writer says they never want to see it.
+pub fn mute(name: &str) {
+    let Some(checker) = CHECKER.get() else { return };
+    checker
+        .group
+        .lock()
+        .unwrap()
+        .config
+        .set_rule_enabled(name, false);
+    start_over();
+}
+
+/// Forget everything made of every block. What the checker would say has changed under
+/// it, and the blocks on the screen are asked about again.
+fn start_over() {
+    let Some(checker) = CHECKER.get() else { return };
+    let mut cache = checker.cache.lock().unwrap();
+    cache.found.clear();
+    cache.order.clear();
+    cache.pending.clear();
+    GENERATION.fetch_add(1, Ordering::Release);
 }
 
 fn run(group: &Mutex<LintGroup>, text: &str) -> Vec<Lint> {
@@ -195,12 +249,15 @@ fn run(group: &Mutex<LintGroup>, text: &str) -> Vec<Lint> {
     let mut found: Vec<Lint> = group
         .lock()
         .unwrap()
-        .lint(&document)
+        // By rule, not in a heap: the name of the rule that objected is what the writer
+        // turns that objection off by, and the only place to get it is here.
+        .organized_lints(&document)
         .into_iter()
+        .flat_map(|(rule, lints)| lints.into_iter().map(move |lint| (rule.clone(), lint)))
         // Spelling is handled below against Harper's built-in dictionary plus the
         // writer's own words; the group's spelling rules would mark the same text twice.
-        .filter(|lint| !matches!(lint.lint_kind, LintKind::Spelling))
-        .filter_map(|lint| carry(lint, &characters))
+        .filter(|(_, lint)| !matches!(lint.lint_kind, LintKind::Spelling))
+        .filter_map(|(rule, lint)| carry(rule, lint, &characters))
         .collect();
     found.extend(misspellings(&document, &characters));
     let left_alone = left_alone(text);
@@ -252,6 +309,7 @@ fn misspellings(document: &Document, characters: &[char]) -> Vec<Lint> {
                 message: format!("`{word}` is not in the dictionary."),
                 replacements: Vec::new(),
                 word,
+                rule: String::new(),
                 pending: true,
             })
         })
@@ -279,7 +337,7 @@ fn checkable(span: Range<usize>, characters: &[char]) -> bool {
 /// suggestion the one piece of text that should stand where the lint is, whichever shape
 /// the suggestion took. Taking the words out is a piece of text like any other — an
 /// empty one.
-fn carry(lint: harper_core::linting::Lint, characters: &[char]) -> Option<Lint> {
+fn carry(rule: String, lint: harper_core::linting::Lint, characters: &[char]) -> Option<Lint> {
     let marked = characters.get(lint.span.start..lint.span.end)?;
     let replacements = lint
         .suggestions
@@ -296,6 +354,7 @@ fn carry(lint: harper_core::linting::Lint, characters: &[char]) -> Option<Lint> 
         message: lint.message,
         replacements,
         word: String::new(),
+        rule,
         pending: false,
     })
 }
@@ -311,7 +370,7 @@ mod tests {
 
     /// The checker loads on threads of its own; the tests share one and wait for it once.
     fn checker() {
-        preload();
+        preload(&Checks::new());
         while !ready() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
@@ -416,6 +475,75 @@ mod tests {
         let text = "This is very unique writing.";
         let (whole, _) = under_cursor(text, 8).expect("the phrase is found");
         assert_eq!(whole, "very unique");
+    }
+
+    /// The name of the rule that objected comes back with the objection: it is what a
+    /// writer who never wants to see that tip again turns off.
+    #[test]
+    fn says_which_rule_objected() {
+        checker();
+        let found = at("This is very unique writing.", 14).expect("the phrase is found");
+        assert!(!found.rule.is_empty());
+        assert!(has_rule(&found.rule), "{}", found.rule);
+        // A misspelling is the dictionary's business and has no rule behind it.
+        let typo = at("I recieve mail.", 4).expect("the typo is found");
+        assert!(typo.rule.is_empty());
+    }
+
+    /// A rule the writer turned off says nothing, and the block it would have objected to
+    /// comes back clean. Its own group, so that the shared checker is left as it was.
+    #[test]
+    fn keeps_quiet_about_a_check_the_writer_turned_off() {
+        let heading = "# This is a title";
+        let group = |checks: Checks| {
+            let mut rules = LintGroup::new_curated(FstDictionary::curated(), Dialect::American);
+            configure(&mut rules.config, &checks);
+            Mutex::new(rules)
+        };
+        let objected = run(&group(Checks::new()), heading);
+        assert_eq!(
+            objected
+                .iter()
+                .map(|lint| lint.rule.as_str())
+                .collect::<Vec<_>>(),
+            ["UseTitleCase"]
+        );
+
+        let turned_off = Checks::from([("UseTitleCase".to_string(), false)]);
+        assert!(run(&group(turned_off), heading).is_empty());
+    }
+
+    /// What the writer said about a rule is what the checker runs it by, and the spell
+    /// checker stays out whatever they said about it: this file does the spelling.
+    #[test]
+    fn runs_the_rules_the_writer_asked_for() {
+        let mut config = FlatConfig::new_curated();
+        let asked = Checks::from([
+            ("UseTitleCase".to_string(), false),
+            ("SpellCheck".to_string(), true),
+        ]);
+        configure(&mut config, &asked);
+        assert!(!config.is_rule_enabled("UseTitleCase"));
+        assert!(!config.is_rule_enabled("SpellCheck"));
+    }
+
+    /// The name in the writer's config is a name harper knows; one it does not know is
+    /// what the config complains about rather than turning nothing off.
+    #[test]
+    fn knows_the_rules_it_lets_a_writer_name() {
+        assert!(has_rule("UseTitleCase"));
+        assert!(!has_rule("UseTitleCse"));
+        let listed = rules();
+        assert!(
+            listed.iter().any(|(name, _)| name == "UseTitleCase"),
+            "{}",
+            listed.len()
+        );
+        assert!(
+            listed
+                .iter()
+                .all(|(_, description)| !description.is_empty())
+        );
     }
 
     #[test]

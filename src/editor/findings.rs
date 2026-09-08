@@ -19,6 +19,9 @@ pub struct LintState {
     /// The misspelled word, where that is what the checker objected to. Empty for a turn
     /// of phrase, which is nothing a dictionary has an opinion about.
     pub word: String,
+    /// Which of the checker's rules objected, for a writer who never wants to hear from
+    /// it again. Empty for a misspelling, which is no rule of the checker's.
+    pub rule: String,
 }
 
 impl LintState {
@@ -70,6 +73,7 @@ impl Editor {
             Some(found) => {
                 self.lint.message = found.message;
                 self.lint.word = found.word;
+                self.lint.rule = found.rule;
                 self.lint.len = found.len;
                 // A lint with nothing to suggest has nothing to accept either, and says
                 // so by having no span to put anything in.

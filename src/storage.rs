@@ -32,6 +32,13 @@ pub fn cursors() -> Option<PathBuf> {
     Some(state_dir()?.join("cursors"))
 }
 
+/// The mode the editor was last left in, and nothing else: one word, the whole file. It
+/// is the writer's doing but not their setting — they change it with a key, not by
+/// editing anything — so it lives here rather than in the config.
+pub fn mode() -> Option<PathBuf> {
+    Some(state_dir()?.join("mode"))
+}
+
 /// Where the writer's own settings live: their config, their keymap, their dictionary.
 fn config_dir() -> Option<PathBuf> {
     Some(home("XDG_CONFIG_HOME", ".config")?.join("markatui"))
@@ -97,8 +104,9 @@ fn write_and_replace(
     File::open(directory)?.sync_all()
 }
 
-/// Replace one of the editor's own small stores — the writer's dictionary, the cursor
-/// it left in each file — making the directory it lives in if this is the first time.
+/// Replace one of the editor's own small stores — the writer's dictionary, the cursor it
+/// left in each file, the mode it was closed in — making the directory it lives in if
+/// this is the first time.
 /// These are written behind the writer's back, so a failure is reported and let go
 /// rather than raised: none of it is their text.
 pub fn replace(path: &Path, contents: &[u8]) {

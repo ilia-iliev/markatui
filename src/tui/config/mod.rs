@@ -7,19 +7,24 @@
 //! [palette]
 //! accent = "#3E8E62"
 //!
+//! [checks]
+//! UseTitleCase = false
 //! ```
 //!
 //! What is read is a config file, not TOML: one table, `key = value`, and three kinds of
 //! value — a string in quotes, a whole number, and `true` or `false`. Anything else is a
 //! line the editor says it could not read rather than one it guesses at. The names of the
-//! colours are [`Palette`]'s. Keys live separately in `keymap.toml`.
+//! colours are [`Palette`]'s, and the names of the checks are [`checks`]'s. Keys live
+//! separately in `keymap.toml`.
 //!
 //! There is one config for a run, read before the first frame: the writer is not editing
 //! it in the window it would change.
 
+pub mod checks;
 pub mod keymap;
 mod lines;
 
+use crate::lint;
 use crate::storage;
 use crate::tui::keys::Keymap;
 
@@ -27,6 +32,7 @@ use crate::tui::theme::Palette;
 use ratatui::style::Color;
 use std::fs;
 use std::io;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 /// Narrower than this is not a column of prose but a margin, and a number that wide is a
@@ -41,6 +47,9 @@ pub struct Config {
     pub inherit_background: bool,
     pub palette: Palette,
     pub keys: Keymap,
+    /// The checker's rules the writer has spoken for, on or off. What is not named here
+    /// stays as the checker ships it.
+    pub checks: lint::Checks,
 }
 
 impl Default for Config {
@@ -50,11 +59,22 @@ impl Default for Config {
             inherit_background: true,
             palette: Palette::default(),
             keys: Keymap::default(),
+            checks: lint::Checks::new(),
         }
     }
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
+
+/// The writer's own config, ready to be written to: the directory it lives in is made if
+/// this is the first thing they have set. The file itself need not be there — an empty
+/// one is what the defaults above say in longhand.
+pub fn path() -> Result<PathBuf, String> {
+    let path = storage::config_file().ok_or("HOME is not set")?;
+    let directory = path.parent().expect("the config has a config directory");
+    fs::create_dir_all(directory).map_err(|error| format!("{}: {error}", directory.display()))?;
+    Ok(path)
+}
 
 /// Read the config and keep it for the rest of the run. What comes back is what could not
 /// be read, a line at a time, for the editor to put at the foot of the screen: a colour
@@ -89,7 +109,7 @@ fn read(text: &str) -> (Config, Vec<String>) {
     let problems = lines::walk(storage::CONFIG_FILE, text, |line| {
         if let Some(name) = line.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
             table = name.trim().to_string();
-            if table != "palette" {
+            if !matches!(table.as_str(), "palette" | "checks") {
                 return Err(format!("there is no [{table}] to put anything in"));
             }
             return Ok(());
@@ -110,6 +130,14 @@ fn set(config: &mut Config, table: &str, key: &str, value: &str) -> Result<(), S
             _ => return Err(unknown(key)),
         },
         "palette" => *config.palette.slot(key).ok_or_else(|| unknown(key))? = colour(value)?,
+        // Naming a check the checker does not have is worth saying out loud: the writer
+        // meant to turn something off, and silence would leave it on.
+        "checks" if !lint::has_rule(key) => {
+            return Err(format!("there is no check called {key:?}"));
+        }
+        "checks" => {
+            config.checks.insert(key.to_string(), boolean(value)?);
+        }
         // The table itself was complained about at the line that opened it; saying so
         // again for every setting in it would bury the one line that matters.
         _ => {}
@@ -209,6 +237,19 @@ mod tests {
         // The line after the ones it could not read is read all the same.
         assert_eq!(config.palette.muted, Color::Rgb(0, 0, 0));
         assert_eq!(config.content_width, Config::default().content_width);
+    }
+
+    /// A check named here is off for the run; one the checker has never heard of is a
+    /// line to complain about, not one to act on.
+    #[test]
+    fn reads_the_checks_a_writer_turned_off() {
+        let config = read_well("[checks]\nUseTitleCase = false\n");
+        assert_eq!(config.checks.get("UseTitleCase"), Some(&false));
+
+        let (config, problems) = read("[checks]\nUseTitleCse = false\n");
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("UseTitleCse"), "{:?}", problems[0]);
+        assert!(config.checks.is_empty());
     }
 
     #[test]

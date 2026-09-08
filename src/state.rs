@@ -43,3 +43,18 @@ pub fn remember(path: &Path, index: usize) {
         .collect();
     crate::storage::replace(&store, text.as_bytes());
 }
+
+/// The mode the editor was left in, where a run has left one.
+pub fn recall_mode() -> Option<String> {
+    let store = crate::storage::mode()?;
+    let word = fs::read_to_string(store).ok()?;
+    Some(word.trim().to_string())
+}
+
+/// Note the mode so the next run opens the way this one closed.
+pub fn remember_mode(mode: &str) {
+    let Some(store) = crate::storage::mode() else {
+        return;
+    };
+    crate::storage::replace(&store, format!("{mode}\n").as_bytes());
+}

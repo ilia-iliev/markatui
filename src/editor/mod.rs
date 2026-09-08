@@ -601,7 +601,7 @@ mod tests {
 
     /// The checker loads on threads of its own; this waits for it once.
     fn checker() {
-        lint::preload();
+        lint::preload(&lint::Checks::new());
         while !lint::ready() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }

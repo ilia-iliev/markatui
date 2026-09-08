@@ -46,6 +46,7 @@ pub enum Action {
     AcceptLint,
     CycleLint(Step),
     Learn,
+    MuteCheck,
     /// The quit prompt's three answers.
     SaveAndQuit,
     DiscardAndQuit,
@@ -64,7 +65,7 @@ pub struct Command {
     action: Action,
 }
 
-pub const COMMANDS: [Command; 18] = [
+pub const COMMANDS: [Command; 19] = [
     Command { section: "Document", name: "save", default: "ctrl+s", action: Action::Save },
     Command { section: "Document", name: "quit", default: "ctrl+q", action: Action::Quit },
     Command { section: "Edit", name: "undo", default: "ctrl+z", action: Action::Undo },
@@ -87,6 +88,9 @@ pub const COMMANDS: [Command; 18] = [
     // The word is spelled the way the writer meant it, and the dictionary is the one
     // that is wrong. It keeps the word from here on.
     Command { section: "Suggestions", name: "learn_word", default: "ctrl+shift+enter", action: Action::Learn },
+    // The checker is right about the words and wrong about this writer. The rule that
+    // objected goes into their config, and stops objecting for good.
+    Command { section: "Suggestions", name: "mute_check", default: "alt+g", action: Action::MuteCheck },
 ];
 
 /// A keystroke as the config writes it: `ctrl+shift+l`, `f5`, `esc`.
@@ -337,6 +341,20 @@ pub fn quitting(key: KeyEvent) -> Action {
     }
 }
 
+/// What a keystroke means while the writer is being asked whether a check should go.
+/// The same three answers as the quit prompt, so that a question at the foot of the
+/// screen is always answered the same way.
+pub fn muting(key: KeyEvent) -> Action {
+    if key.kind == KeyEventKind::Release {
+        return Action::Nothing;
+    }
+    match key.code {
+        KeyCode::Char('y' | 'Y') | KeyCode::Enter => Action::MuteCheck,
+        KeyCode::Char('n' | 'N') | KeyCode::Esc => Action::Cancel,
+        _ => Action::Nothing,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,6 +443,32 @@ mod tests {
     fn toggles_grammar_and_reading_modes() {
         assert_eq!(control(KeyCode::Char('g')), Action::ToggleGrammar);
         assert_eq!(control(KeyCode::Char('r')), Action::ToggleReading);
+    }
+
+    /// Turning a check off is asked about first, and the question takes the same three
+    /// answers the quit prompt does.
+    #[test]
+    fn asks_before_turning_a_check_off() {
+        assert_eq!(
+            editing(press(KeyCode::Char('g'), KeyModifiers::ALT)),
+            Action::MuteCheck
+        );
+        assert_eq!(
+            muting(press(KeyCode::Char('y'), KeyModifiers::NONE)),
+            Action::MuteCheck
+        );
+        assert_eq!(
+            muting(press(KeyCode::Enter, KeyModifiers::NONE)),
+            Action::MuteCheck
+        );
+        assert_eq!(
+            muting(press(KeyCode::Char('n'), KeyModifiers::NONE)),
+            Action::Cancel
+        );
+        assert_eq!(
+            muting(press(KeyCode::Esc, KeyModifiers::NONE)),
+            Action::Cancel
+        );
     }
 
     #[test]
