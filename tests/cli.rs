@@ -15,9 +15,9 @@ fn help_flag_prints_help_without_opening_a_file() {
 }
 
 #[test]
-fn help_command_prints_help_without_opening_a_file() {
+fn long_help_flag_prints_help_without_opening_a_file() {
     let output = Command::new(env!("CARGO_BIN_EXE_markatui"))
-        .arg("help")
+        .arg("--help")
         .output()
         .expect("markatui runs");
 
@@ -41,4 +41,53 @@ fn unknown_flag_reports_the_available_flags() {
     );
     assert!(stderr.contains("Available options:"), "{stderr}");
     assert!(stderr.contains("-h, --help"), "{stderr}");
+}
+
+/// Turning a check off writes it into the config, and the listing then says so. The two
+/// halves are one test because the second only means anything after the first.
+#[test]
+fn turns_a_check_off_and_says_so_in_the_listing() {
+    let config = std::env::temp_dir().join(format!("markatui-checks-{}", std::process::id()));
+    let markatui = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_markatui"));
+        command.env("XDG_CONFIG_HOME", &config);
+        command
+    };
+
+    let turned_off = markatui()
+        .args(["-checks", "off", "UseTitleCase"])
+        .output()
+        .expect("markatui runs");
+    assert!(turned_off.status.success(), "{turned_off:?}");
+
+    let written = std::fs::read_to_string(config.join("markatui/config.toml")).expect("a config");
+    assert!(
+        written.contains("[checks]\nUseTitleCase = false"),
+        "{written}"
+    );
+
+    let listed = markatui().arg("-checks").output().expect("markatui runs");
+    let stdout = String::from_utf8_lossy(&listed.stdout);
+    let line = stdout
+        .lines()
+        .find(|line| line.starts_with("UseTitleCase "))
+        .expect("the check is listed");
+    assert!(line.ends_with("[off]"), "{line}");
+
+    std::fs::remove_dir_all(config).expect("the temporary config goes");
+}
+
+/// A check nobody has heard of is a mistake worth stopping for, not a line to write.
+#[test]
+fn refuses_to_turn_off_a_check_that_does_not_exist() {
+    let output = Command::new(env!("CARGO_BIN_EXE_markatui"))
+        .args(["-checks", "off", "NoSuchRule"])
+        .output()
+        .expect("markatui runs");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("no check called \"NoSuchRule\""),
+        "{output:?}"
+    );
 }
