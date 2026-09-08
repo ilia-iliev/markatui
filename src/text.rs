@@ -21,14 +21,6 @@ pub fn length(text: &str) -> usize {
     text.chars().count()
 }
 
-/// Where each character of `text` starts, in bytes, with the end of the text last. One
-/// more entry than there are characters, so a span's far end has somewhere to point.
-pub fn byte_offsets(text: &str) -> Vec<usize> {
-    let mut offsets: Vec<usize> = text.char_indices().map(|(offset, _)| offset).collect();
-    offsets.push(text.len());
-    offsets
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -37,7 +29,6 @@ mod tests {
     fn counts_an_emoji_as_one() {
         assert_eq!(char_at("🙂 a", 5), 2);
         assert_eq!(byte_offset("🙂 a", 2), 5);
-        assert_eq!(byte_offsets("🙂a"), [0, 4, 5]);
     }
 
     #[test]

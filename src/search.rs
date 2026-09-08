@@ -42,17 +42,17 @@ impl Search {
         self.showing()
     }
 
-    pub fn showing(&self) -> Option<Occurrence> {
+    fn showing(&self) -> Option<Occurrence> {
         self.found.get(self.choice).copied()
     }
 
-    pub fn count(&self) -> i32 {
-        self.found.len() as i32
+    pub fn count(&self) -> usize {
+        self.found.len()
     }
 
-    /// Which occurrence is on show, or -1 when there is none.
-    pub fn choice(&self) -> i32 {
-        if self.found.is_empty() { -1 } else { self.choice as i32 }
+    /// Which occurrence is on show, or nowhere when the word is not in the document.
+    pub fn choice(&self) -> Option<usize> {
+        (!self.found.is_empty()).then_some(self.choice)
     }
 
     pub fn forget(&mut self) {
@@ -167,7 +167,7 @@ mod tests {
         // Each letter is a search of its own: the writer is still typing.
         assert_eq!(search.look_for(&blocks, "mark"), Some(Occurrence { block: 0, at: 4, end: 8 }));
         assert_eq!(search.look_for(&blocks, "marker"), Some(Occurrence { block: 0, at: 4, end: 10 }));
-        assert_eq!(search.choice(), 0);
+        assert_eq!(search.choice(), Some(0));
         assert_eq!(search.count(), 3);
     }
 
@@ -179,7 +179,7 @@ mod tests {
         assert_eq!(search.walk(1), Some(Occurrence { block: 1, at: 4, end: 10 }));
         assert_eq!(search.walk(1), Some(Occurrence { block: 2, at: 11, end: 17 }));
         assert_eq!(search.walk(-1), Some(Occurrence { block: 1, at: 4, end: 10 }));
-        assert_eq!(search.choice(), 1);
+        assert_eq!(search.choice(), Some(1));
     }
 
     #[test]
@@ -211,7 +211,7 @@ mod tests {
         for needle in ["", "nowhere"] {
             assert_eq!(search.look_for(&blocks, needle), None);
             assert_eq!(search.count(), 0);
-            assert_eq!(search.choice(), -1);
+            assert_eq!(search.choice(), None);
             assert_eq!(search.walk(1), None);
         }
     }
@@ -224,7 +224,7 @@ mod tests {
         search.walk(1);
         search.forget();
         assert_eq!(search.count(), 0);
-        assert_eq!(search.choice(), -1);
+        assert_eq!(search.choice(), None);
         assert_eq!(search.showing(), None);
     }
 }

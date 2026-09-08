@@ -5,6 +5,50 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
+/// The names of the two files the writer edits. Kept here beside the paths they are
+/// joined onto, because they are also what a complaint about a bad line names.
+pub const CONFIG_FILE: &str = "config.toml";
+pub const KEYMAP_FILE: &str = "keymap.toml";
+
+/// The colours and the column: `~/.config/markatui/config.toml`.
+pub fn config_file() -> Option<PathBuf> {
+    Some(config_dir()?.join(CONFIG_FILE))
+}
+
+/// Which key each command is on: `~/.config/markatui/keymap.toml`.
+pub fn keymap_file() -> Option<PathBuf> {
+    Some(config_dir()?.join(KEYMAP_FILE))
+}
+
+/// The writer's own words — names, jargon, the title of the thing they are writing
+/// about — one to a line, `#` for a comment.
+pub fn dictionary() -> Option<PathBuf> {
+    Some(config_dir()?.join("dictionary"))
+}
+
+/// The block the cursor was left in, a file to a line. Kept apart from the config
+/// because the writer never writes it and never has to keep it.
+pub fn cursors() -> Option<PathBuf> {
+    Some(state_dir()?.join("cursors"))
+}
+
+/// Where the writer's own settings live: their config, their keymap, their dictionary.
+fn config_dir() -> Option<PathBuf> {
+    Some(home("XDG_CONFIG_HOME", ".config")?.join("markatui"))
+}
+
+/// Where the editor's own notes to itself live.
+fn state_dir() -> Option<PathBuf> {
+    Some(home("XDG_STATE_HOME", ".local/state")?.join("markatui"))
+}
+
+fn home(variable: &str, default: &str) -> Option<PathBuf> {
+    match std::env::var_os(variable) {
+        Some(directory) => Some(PathBuf::from(directory)),
+        None => Some(PathBuf::from(std::env::var_os("HOME")?).join(default)),
+    }
+}
+
 /// Replace `path` atomically with `contents`. The temporary file sits beside the target,
 /// so rename cannot cross filesystems. Existing permissions are retained.
 pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {

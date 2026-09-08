@@ -1,19 +1,11 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Files whose cursor position is worth remembering, most recent first.
 const LIMIT: usize = 200;
 
-fn store() -> Option<PathBuf> {
-    let base = match std::env::var_os("XDG_STATE_HOME") {
-        Some(dir) => PathBuf::from(dir),
-        None => PathBuf::from(std::env::var_os("HOME")?).join(".local/state"),
-    };
-    Some(base.join("markatui").join("cursors"))
-}
-
 fn entries() -> Vec<(String, usize)> {
-    let Some(store) = store() else {
+    let Some(store) = crate::storage::cursors() else {
         return Vec::new();
     };
     let Ok(text) = fs::read_to_string(store) else {
@@ -37,7 +29,7 @@ pub fn recall(path: &Path) -> Option<usize> {
 }
 
 pub fn remember(path: &Path, index: usize) {
-    let Some(store) = store() else {
+    let Some(store) = crate::storage::cursors() else {
         return;
     };
     let path = path.to_string_lossy().to_string();

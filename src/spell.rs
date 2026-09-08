@@ -1,7 +1,7 @@
 use harper_core::spell::{Dictionary as _, FstDictionary, suggest_correct_spelling_str};
 use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, OnceLock, RwLock};
 
 struct Speller {
@@ -9,14 +9,8 @@ struct Speller {
     personal: RwLock<HashSet<String>>,
 }
 
-/// The file the writer's own words are kept in — names, jargon, the title of the thing
-/// they are writing about — one per line, `#` for a comment.
-fn personal_path() -> Option<PathBuf> {
-    Some(config_home()?.join("markatui").join("dictionary"))
-}
-
 fn personal_words() -> HashSet<String> {
-    let Some(path) = personal_path() else {
+    let Some(path) = crate::storage::dictionary() else {
         return HashSet::new();
     };
     let Ok(text) = fs::read_to_string(&path) else {
@@ -27,13 +21,6 @@ fn personal_words() -> HashSet<String> {
         .filter(|word| !word.is_empty() && !word.starts_with('#'))
         .map(str::to_string)
         .collect()
-}
-
-fn config_home() -> Option<PathBuf> {
-    match std::env::var_os("XDG_CONFIG_HOME") {
-        Some(dir) => Some(PathBuf::from(dir)),
-        None => Some(PathBuf::from(std::env::var_os("HOME")?).join(".config")),
-    }
 }
 
 /// Harper's American-English dictionary is compiled into the program. Keep one handle to
@@ -74,7 +61,7 @@ pub fn suggestions(word: &str) -> Vec<String> {
 /// Take `word` into the writer's own dictionary now and on subsequent runs.
 pub fn learn(word: &str) {
     speller().personal.write().unwrap().insert(word.to_string());
-    if let Some(path) = personal_path() {
+    if let Some(path) = crate::storage::dictionary() {
         remember(&path, word);
     }
 }

@@ -41,7 +41,7 @@ const JOINS: [char; 5] = ['.', '/', ':', '@', '_'];
 
 const CACHE_LIMIT: usize = 256;
 
-type CheckKey = (String, bool);
+type CheckKey = String;
 
 struct CheckCache {
     found: HashMap<CheckKey, Vec<Lint>>,
@@ -90,7 +90,7 @@ pub fn preload() {
         GENERATION.fetch_add(1, Ordering::Release);
 
         for key in receive {
-            let found = run(&group, &key.0, key.1);
+            let found = run(&group, &key);
             remember_check(&mut cache.lock().unwrap(), key, found);
             GENERATION.fetch_add(1, Ordering::Release);
         }
@@ -98,8 +98,9 @@ pub fn preload() {
 }
 
 /// Whether the checker is up yet. Its dictionaries and its rules take the better part
-/// of a second between them — longer than the first frame takes to appear — so until it
-/// is loaded nothing is checked, and the editor is told so rather than made to wait.
+/// of a second between them — longer than the first frame takes to appear. Nothing in the
+/// editor waits on it: the tests below, and the editor's own, are what have to.
+#[cfg(test)]
 pub fn ready() -> bool {
     CHECKER.get().is_some() && spell::ready()
 }
@@ -112,11 +113,11 @@ pub fn generation() -> u64 {
 
 /// Return findings already worked out for this block. A miss schedules one and returns
 /// immediately; the generation change has the event loop ask again when it finishes.
-pub fn request_check(text: &str, markdown: bool) -> Vec<Lint> {
+pub fn request_check(text: &str) -> Vec<Lint> {
     let Some(checker) = CHECKER.get().filter(|_| spell::ready()) else {
         return Vec::new();
     };
-    let key = (text.to_string(), markdown);
+    let key = text.to_string();
     let mut cache = checker.cache.lock().unwrap();
     if let Some(found) = cache.found.get(&key) {
         return found.clone();
@@ -130,11 +131,11 @@ pub fn request_check(text: &str, markdown: bool) -> Vec<Lint> {
 /// Synchronous checking is kept inside the Rust core for focused tests. UI callers use
 /// [`request_check`] and never wait for Harper.
 #[cfg(test)]
-fn check(text: &str, markdown: bool) -> Vec<Lint> {
+fn check(text: &str) -> Vec<Lint> {
     let Some(checker) = CHECKER.get().filter(|_| spell::ready()) else {
         return Vec::new();
     };
-    run(&checker.group, text, markdown)
+    run(&checker.group, text)
 }
 
 fn remember_check(cache: &mut CheckCache, key: CheckKey, found: Vec<Lint>) {
@@ -152,7 +153,7 @@ fn remember_check(cache: &mut CheckCache, key: CheckKey, found: Vec<Lint>) {
 /// Where in a block the checker took exception to something, for the wash the view puts
 /// under those words. Only what is already worked out; a miss schedules the work.
 pub fn marks(text: &str) -> Vec<Range<usize>> {
-    request_check(text, true).into_iter().map(|lint| lint.at..lint.at + lint.len).collect()
+    request_check(text).into_iter().map(|lint| lint.at..lint.at + lint.len).collect()
 }
 
 /// What the checker makes of the place the cursor is standing in a block, if anything.
@@ -160,9 +161,9 @@ pub fn marks(text: &str) -> Vec<Range<usize>> {
 /// under the cursor — and it is the only one whose replacements are worth working out.
 pub fn at(text: &str, cursor: usize) -> Option<Lint> {
     #[cfg(test)]
-    let checked = check(text, true);
+    let checked = check(text);
     #[cfg(not(test))]
-    let checked = request_check(text, true);
+    let checked = request_check(text);
     let mut found = checked
         .into_iter()
         .filter(|lint| cursor >= lint.at && cursor <= lint.at + lint.len)
@@ -187,12 +188,8 @@ pub fn learn(word: &str) {
     }
 }
 
-fn run(group: &Mutex<LintGroup>, text: &str, markdown: bool) -> Vec<Lint> {
-    let document = if markdown {
-        Document::new_markdown_default_curated(text)
-    } else {
-        Document::new_plain_english_curated(text)
-    };
+fn run(group: &Mutex<LintGroup>, text: &str) -> Vec<Lint> {
+    let document = Document::new_markdown_default_curated(text);
     let characters: Vec<char> = text.chars().collect();
 
     let mut found: Vec<Lint> = group
@@ -206,10 +203,8 @@ fn run(group: &Mutex<LintGroup>, text: &str, markdown: bool) -> Vec<Lint> {
         .filter_map(|lint| carry(lint, &characters))
         .collect();
     found.extend(misspellings(&document, &characters));
-    if markdown {
-        let left_alone = left_alone(text);
-        found.retain(|lint| !left_alone.iter().any(|part| overlaps(lint, part)));
-    }
+    let left_alone = left_alone(text);
+    found.retain(|lint| !left_alone.iter().any(|part| overlaps(lint, part)));
     found.sort_by_key(|lint| (lint.at, lint.len));
     found
 }
@@ -325,7 +320,7 @@ mod tests {
     /// The lints of a block, as (what they cover, what is offered for it).
     fn found(text: &str) -> Vec<(String, Vec<String>)> {
         checker();
-        check(text, true)
+        check(text)
             .into_iter()
             .map(|lint| {
                 let covering = covered(text, &lint);
@@ -408,7 +403,7 @@ mod tests {
     fn counts_positions_in_characters() {
         checker();
         // The emoji is one character, so the word after it starts at 2.
-        let lints = check("🙂 recieve it.", true);
+        let lints = check("🙂 recieve it.");
         assert_eq!(lints.len(), 1);
         assert_eq!((lints[0].at, lints[0].len), (2, 7));
     }

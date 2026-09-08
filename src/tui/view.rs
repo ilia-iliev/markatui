@@ -5,7 +5,9 @@
 use crate::editor::Editor;
 use crate::layout::{self, Layout, Request};
 use crate::lint;
+use crate::parse;
 use crate::text::char_at;
+use crate::tui::images::{Gallery, Placed};
 use crate::tui::theme;
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
@@ -29,13 +31,32 @@ pub struct Document {
     /// What each layout was built from, so that a block nothing has touched is not laid
     /// out again on the next keystroke.
     sources: Vec<Arc<String>>,
+    /// The file each block is a picture of, where it is one, kept alongside the layout so
+    /// that a block nothing has touched is not parsed again to find out.
+    paths: Vec<Option<String>>,
+    /// The blocks that have rows reserved for a picture, and what to draw in them.
+    pictures: Vec<Placed>,
+    /// How far the active block moved down the screen on the last rebuild.
+    shift: isize,
     width: u16,
     /// The checker's generation the wash was drawn from.
     generation: u64,
     active: usize,
+    grammar: bool,
+    reading: bool,
 }
 
 impl Document {
+    /// Set the display toggles. A change invalidates layouts which may contain revealed
+    /// markdown or checker marks.
+    pub fn configure(&mut self, grammar: bool, reading: bool) {
+        if self.grammar != grammar || self.reading != reading {
+            self.grammar = grammar;
+            self.reading = reading;
+            self.sources.clear();
+        }
+    }
+
     pub fn height(&self) -> usize {
         self.tops.last().copied().unwrap_or(0)
     }
@@ -57,6 +78,18 @@ impl Document {
         self.tops[index]
     }
 
+    /// The pictures to draw, and which block each belongs to.
+    pub fn pictures(&self) -> &[Placed] {
+        &self.pictures
+    }
+
+    /// How far the active block moved down the screen when the document was last laid out
+    /// again — rows appearing above it as a picture arrives, and nothing else. The window
+    /// follows it, so what the writer is looking at stays where it was.
+    pub fn shift(&self) -> isize {
+        self.shift
+    }
+
     /// Which block a screen row belongs to, and which of that block's rows it is. A row
     /// in the gap between two blocks belongs to the one above it.
     pub fn at(&self, row: usize) -> Option<(usize, usize)> {
@@ -68,47 +101,88 @@ impl Document {
 
     /// Lay out every block that has changed since the last frame, and stack them again.
     /// A block the writer has not touched keeps the rows it already had.
-    pub fn rebuild(&mut self, editor: &Editor, width: u16) {
+    pub fn rebuild(&mut self, editor: &Editor, width: u16, gallery: &mut Gallery) {
         let generation = lint::generation();
-        let fresh = width != self.width || generation != self.generation;
+        // Asked first and on its own: a picture that has just been read changes how many
+        // rows its block takes, so the rows kept from the last frame are no use — and
+        // taking it in is not something to leave to whether the other two are true.
+        let arrived = gallery.settle();
+        let fresh = arrived || width != self.width || generation != self.generation;
         let blocks = editor.blocks();
+        // Where the active block stood before, so that rows appearing above it can be
+        // taken off the scroll rather than shoving the writer's line down the screen.
+        let was = (self.active == editor.index())
+            .then(|| self.tops.get(self.active).copied())
+            .flatten();
         let mut layouts = Vec::with_capacity(blocks.len());
         let mut sources = Vec::with_capacity(blocks.len());
+        let mut paths = Vec::with_capacity(blocks.len());
+        let mut pictures = Vec::new();
 
         for (index, source) in blocks.iter().enumerate() {
             let active = index == editor.index();
             let kept = (!fresh && !active && index != self.active)
                 .then(|| self.reuse(index, source))
                 .flatten();
-            layouts.push(kept.unwrap_or_else(|| {
-                let text = editor.block(index);
-                // Nothing is said about a block while it is being typed into: a word
-                // half-written is not a word spelled wrong.
-                let marks = if active && !editor.settled() { Vec::new() } else { lint::marks(text) };
-                layout::block(Request {
-                    text,
-                    cursor: active.then(|| editor.active().cursor()),
-                    width,
-                    lints: &marks,
-                })
-            }));
+            let path = match &kept {
+                Some((_, path)) => path.clone(),
+                None => parse::lone_image(editor.block(index)),
+            };
+            // A block holding the cursor is markdown, picture and all — except in reading
+            // mode. Its picture is still asked after because asking is what keeps it.
+            let rows = path.as_deref().and_then(|path| gallery.rows(path, width));
+            let picture = rows.filter(|_| !active || self.reading);
+            if let Some(path) = path.clone().filter(|_| picture.is_some()) {
+                pictures.push(Placed { index, path });
+            }
+            layouts.push(match kept {
+                Some((layout, _)) => layout,
+                None => self.lay_out(editor, index, width, picture),
+            });
             sources.push(source.clone());
+            paths.push(path);
         }
 
         self.tops = stacked(&layouts);
+        self.shift = was.map_or(0, |before| self.tops[editor.index()] as isize - before as isize);
         self.layouts = layouts;
         self.sources = sources;
+        self.paths = paths;
+        self.pictures = pictures;
         self.width = width;
         self.generation = generation;
         self.active = editor.index();
     }
 
-    /// The layout block `index` already had, if it was built from this very source. The
-    /// blocks either side of an edit shift along, so the source is matched rather than
-    /// the position: a paragraph typed above does not re-lay out the ten below it.
-    fn reuse(&self, index: usize, source: &Arc<String>) -> Option<Layout> {
+    /// One block laid out afresh.
+    fn lay_out(&self, editor: &Editor, index: usize, width: u16, picture: Option<u16>) -> Layout {
+        let active = index == editor.index();
+        let text = editor.block(index);
+        // Nothing is said about a block while it is being typed into: a word half-written
+        // is not a word spelled wrong.
+        let marks = if !self.grammar || active && !editor.settled() {
+            Vec::new()
+        } else {
+            lint::marks(text)
+        };
+        layout::block(Request {
+            text,
+            cursor: active.then(|| editor.active().cursor()),
+            reveal: !self.reading,
+            width,
+            lints: &marks,
+            picture,
+        })
+    }
+
+    /// The layout block `index` already had, and the file it is a picture of, if it was
+    /// built from this very source. The blocks either side of an edit shift along, so the
+    /// source is matched rather than the position: a paragraph typed above does not
+    /// re-lay out the ten below it.
+    fn reuse(&self, index: usize, source: &Arc<String>) -> Option<(Layout, Option<String>)> {
         let cached = self.sources.get(index)?;
-        Arc::ptr_eq(cached, source).then(|| self.layouts[index].clone())
+        Arc::ptr_eq(cached, source)
+            .then(|| (self.layouts[index].clone(), self.paths[index].clone()))
     }
 }
 
@@ -126,24 +200,30 @@ fn stacked(layouts: &[Layout]) -> Vec<usize> {
 
 /// Draw the column of text. `scroll` is the screen row at the top of the area.
 pub fn draw(frame: &mut Frame, area: Rect, editor: &Editor, document: &Document, scroll: usize) {
-    let width = theme::CONTENT_WIDTH.min(area.width);
-    let left = area.x + (area.width - width) / 2;
+    let column = column(area);
     let selection = Selection::of(editor);
 
     for line in 0..area.height {
         let row = scroll + line as usize;
         let Some((index, within)) = document.at(row) else { continue };
-        paint(frame, Rect { x: left, y: area.y + line, width, height: 1 },
+        paint(frame, Rect { y: area.y + line, height: 1, ..column },
               &document.rows(index)[within], index, &selection);
     }
 
-    if let Some((row, column)) = document.caret()
+    if let Some((row, at)) = document.caret()
         && row >= scroll
         && row < scroll + area.height as usize
-        && column < width
+        && at < column.width
     {
-        frame.set_cursor_position(Position::new(left + column, area.y + (row - scroll) as u16));
+        frame.set_cursor_position(Position::new(column.x + at, area.y + (row - scroll) as u16));
     }
+}
+
+/// The column everything is drawn in: as wide as a line of prose should be, down the
+/// middle of whatever room the terminal gives.
+pub fn column(area: Rect) -> Rect {
+    let width = theme::content_width().min(area.width);
+    Rect { x: area.x + (area.width - width) / 2, width, ..area }
 }
 
 fn paint(frame: &mut Frame, area: Rect, row: &layout::Row, index: usize, selection: &Selection) {
@@ -215,11 +295,21 @@ impl Selection {
     }
 }
 
+/// How many rows a footer message occupies when wrapped inside the document column.
+pub fn footer_height(area: Rect, text: &str) -> u16 {
+    Paragraph::new(text)
+        .wrap(Wrap { trim: false })
+        .line_count(column(area).width)
+        .try_into()
+        .unwrap_or(u16::MAX)
+        .max(1)
+}
+
 /// The foot of the screen: the checker's message, or the search bar, or the quit prompt.
 /// A band right across, with the words in the same column as the text above them.
-pub fn footer(frame: &mut Frame, area: Rect, text: &str, style: Style) {
-    let width = theme::CONTENT_WIDTH.min(area.width);
-    let left = area.x + (area.width - width) / 2;
+pub fn footer(frame: &mut Frame, area: Rect, text: &str) {
+    let style = theme::prompt();
+    let column = column(area);
     let buffer = frame.buffer_mut();
     for y in area.y..area.y + area.height {
         for x in area.x..area.x + area.width {
@@ -228,6 +318,6 @@ pub fn footer(frame: &mut Frame, area: Rect, text: &str, style: Style) {
     }
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(text.to_string(), style))).wrap(Wrap { trim: false }),
-        Rect { x: left, y: area.y, width, height: area.height },
+        column,
     );
 }

@@ -1,16 +1,12 @@
 # markatui
 
-A Markdown editor for the terminal. You type Markdown and it renders. Keyboard-first, one
-file per instance, no mouse.
+A Markdown editor for the terminal. You type Markdown and it renders. Keyboard-first with more intuitive and configurable keymap.
 
-The block under the cursor is raw Markdown. Every other block is drawn as it reads —
-headings coloured and ruled, bullets as bullets, quotes with a bar in the gutter, code on
-its own ground, tables as tables. Move the cursor into a block and it opens back up into
-the source, so what you edit is always the text that is on disk.
+Mostly WYSIWYG Markdown - the block under the cursor is shown as raw Markdown in some cases. Includes images.
 
-This is [blogawrite](https://github.com/ilia-iliev/blogawrite) without Qt. Same block
-model, same keys, same checker, same file-in file-out guarantee: the bytes you did not
-touch come back byte for byte, blank lines and all.
+![The sample document in markatui: the heading under the cursor shows its hash, every other block is rendered, the picture is drawn as sixel, and the checker's suggestion is at the foot of the screen](docs/screenshot.png)
+
+This is [blogawrite](https://github.com/ilia-iliev/blogawrite) without Qt.
 
 ```sh
 markatui post.md
@@ -18,59 +14,56 @@ markatui post.md
 
 ## Keys
 
-| | |
-|---|---|
-| `ctrl+s` | save |
-| `ctrl+q` | quit — asks first if there is unsaved work |
-| `ctrl+z` | undo |
-| `ctrl+a` | select the whole document |
-| `ctrl+c` | copy the selection (OSC 52) |
-| `ctrl+f` | find a word; `ctrl+↑` `ctrl+↓` walk the occurrences, `esc` closes |
-| `ctrl+b` `ctrl+i` `ctrl+u` | bold, italic, strikethrough |
-| `ctrl+shift+l` `ctrl+shift+i` | insert a link, insert an image |
-| `ctrl+↑` `ctrl+↓` | walk the checker's suggestions |
-| `ctrl+enter` | take the suggestion on show |
-| `ctrl+shift+enter` | take the word into your dictionary |
-| `enter` twice | end the block |
-| `ctrl+←` `ctrl+→` | a word at a time |
-| `pgup` `pgdn` | a screenful at a time |
+```sh
+markatui keymap show
+```
 
-Shift with any movement key draws a selection, across blocks as well as inside one.
+Keymapping is configurable
 
-## Spelling and grammar
 
-American-English spelling and style checking are built in, with a personal dictionary at
-`~/.config/markatui/dictionary` — one word per line, `#` for a comment. A word or a phrase
-the checker objects to gets a wash behind it; the foot of the screen says what is wrong
-and what to put there instead.
+Copy/paste uses to the machine's clipboard. 
 
-Nothing is marked in a block while you are typing in it. The checker has its say once you
-pause.
+## Config
+
+`~/.config/markatui/config.toml`, all of it optional. What is below is the default:
+
+```toml
+# How wide the column of text is, in cells. 20 to 500.
+content_width = 72
+# Leave the terminal's own background alone. false paints `paper` and `ink` over it.
+inherit_background = true
+
+[palette]
+accent = "#3E8E62"      # headings and links
+muted = "#8A8378"       # markers, bullets, rules, box drawing
+lint = "#F3E4C3"        # the wash under something the checker objects to
+lint_ink = "#2D2A26"
+code = "#3A3733"        # the ground a fenced block sits on
+prompt = "#26241F"      # the band at the foot of the screen
+prompt_ink = "#FFFFFF"
+paper = "#FAF6EC"       # both only used when inherit_background is false
+ink = "#2D2A26"
+```
+
+Colours are `"#RRGGBB"`. 
+
+## Spelling and Grammar
+
+American-English spelling and style checking are built in, with a personal dictionary at `~/.config/markatui/dictionary` 
 
 ## Terminals
 
-Written against foot; Alacritty and kitty work too. Everything terminal-specific is
-decided once at startup in `tui::probe`, and the rest of the editor reads that answer
-rather than asking which terminal it is in.
-
-Where the kitty keyboard protocol is not answered, `ctrl+i` arrives as Tab and
-`ctrl+enter` as Enter, so italics and accepting a suggestion are lost. Copy goes through
-OSC 52, which a terminal with it turned off ignores silently.
+Written against foot; Alacritty and kitty could work too. Everything terminal-specific is 
 
 ## Build
 
 ```sh
-cargo build --release
-install -Dm755 target/release/markatui ~/.local/bin/markatui
+packaging/install.sh
 ```
 
-Rust 1.95 or newer. No C++, no Qt, no system libraries.
+Builds and puts the binary in `~/.local/bin`; `PREFIX=/usr/local packaging/install.sh` to put it somewhere else. 
 
-## Not there yet
-
-Images draw as a line naming the file rather than as a picture; the graphics protocols are
-the next piece of work. There is no config file, so the palette, the column width and the
-keymap are what the source says they are. See `docs/tui-plan.md`.
+Rust 1.95 or newer
 
 ## License
 

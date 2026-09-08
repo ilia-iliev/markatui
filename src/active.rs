@@ -95,11 +95,6 @@ impl Active {
         self.place(to);
     }
 
-    /// The text and the cursor as the document will store them.
-    pub fn taken(self) -> (String, usize) {
-        (self.text, self.cursor)
-    }
-
     // ---- moving ----------------------------------------------------------------
 
     /// Step one character.
@@ -142,9 +137,19 @@ impl Active {
         self.goal = None;
     }
 
+    /// Move to the start or end of the line, barring the whitespace at that edge: Home
+    /// lands on the first character of what is written rather than in the indentation in
+    /// front of it, End just after the last rather than out in the trailing spaces. A
+    /// line that is nothing but whitespace has no such place, and keeps its plain edges.
     pub fn to_line_edge(&mut self, step: Step) {
         let (start, end) = self.line_bounds(self.cursor);
-        self.cursor = if step > 0 { end } else { start };
+        let characters: Vec<char> = self.text.chars().collect();
+        let line = &characters[start..end];
+        self.cursor = if step > 0 {
+            line.iter().rposition(|c| !c.is_whitespace()).map_or(end, |at| start + at + 1)
+        } else {
+            line.iter().position(|c| !c.is_whitespace()).map_or(start, |at| start + at)
+        };
         self.goal = None;
     }
 
@@ -175,13 +180,6 @@ impl Active {
         // Kept across the move, which is the whole point of it.
         self.goal = Some(goal);
         true
-    }
-
-    /// Whether the cursor stands on the first or last source line of the block, which is
-    /// what decides whether an up or down key leaves it.
-    pub fn at_block_edge(&self, step: Step) -> bool {
-        let (start, end) = self.line_bounds(self.cursor);
-        if step > 0 { end >= self.length() } else { start == 0 }
     }
 
     /// Where the source line holding `at` begins and ends, in characters.
@@ -412,8 +410,6 @@ mod tests {
     fn says_when_there_is_no_line_left_to_walk_to() {
         assert!(!at("one\ntwo", 1).step_line(-1));
         assert!(!at("one\ntwo", 5).step_line(1));
-        assert!(at("one\ntwo", 1).at_block_edge(-1));
-        assert!(!at("one\ntwo", 1).at_block_edge(1));
     }
 
     #[test]
@@ -423,6 +419,23 @@ mod tests {
         assert_eq!(active.cursor(), 4);
         active.to_line_edge(1);
         assert_eq!(active.cursor(), 7);
+    }
+
+    #[test]
+    fn stops_at_the_writing_rather_than_the_whitespace_round_it() {
+        //             0123456789
+        let mut active = at("  two  
+x", 7);
+        active.to_line_edge(-1);
+        assert_eq!(active.cursor(), 2);
+        active.to_line_edge(1);
+        assert_eq!(active.cursor(), 5);
+        // A line with nothing but whitespace on it keeps its plain edges.
+        let mut blank = at("   ", 1);
+        blank.to_line_edge(1);
+        assert_eq!(blank.cursor(), 3);
+        blank.to_line_edge(-1);
+        assert_eq!(blank.cursor(), 0);
     }
 
     #[test]

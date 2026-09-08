@@ -2,7 +2,8 @@
 //! looking at the layout without a terminal to run the editor in.
 
 use markatui::editor::Editor;
-use markatui::tui::{theme, view};
+use markatui::tui::images::Gallery;
+use markatui::tui::{config, theme, view};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
@@ -12,13 +13,19 @@ fn main() {
     let width: u16 = arguments.next().map(|w| w.parse().unwrap()).unwrap_or(80);
     let height: u16 = arguments.next().map(|h| h.parse().unwrap()).unwrap_or(40);
 
+    // The writer's own column width and palette, so that this prints what they would see.
+    for problem in config::load() {
+        eprintln!("markatui: {problem}");
+    }
     let mut editor = Editor::open(std::path::Path::new(&path));
     editor.activate(0, 0);
     let mut document = view::Document::default();
+    // No pictures: this prints characters, and a picture is not made of them.
+    let mut gallery = Gallery::blind();
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
         .draw(|frame| {
-            document.rebuild(&editor, theme::CONTENT_WIDTH.min(width));
+            document.rebuild(&editor, theme::content_width().min(width), &mut gallery);
             view::draw(frame, frame.area(), &editor, &document, 0);
         })
         .unwrap();

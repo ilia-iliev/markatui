@@ -2,11 +2,17 @@
 //! makes of it, what the search is looking at, and the undo behind all of it. This is
 //! what the Qt front end held minus the Qt, so none of it knows there is a terminal.
 
+mod findings;
+mod motion;
+mod undo;
+
+pub use findings::{LintState, SearchState};
+pub use motion::Motion;
+
 use crate::active::{Active, Step};
+use undo::Undo;
 use crate::blocks::{self, Span};
-use crate::lint;
 use crate::parse;
-use crate::search;
 use crate::state;
 use crate::storage;
 use std::collections::VecDeque;
@@ -15,69 +21,13 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-const UNDO_LIMIT: usize = 512;
-
-/// A way of moving the cursor. Everything that is not a plain step is here so that the
-/// key layer above names an intention and nothing more.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Motion {
-    Character(Step),
-    Word(Step),
-    Line(Step),
-    LineEdge(Step),
-    Block(Step),
-    Document(Step),
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EditRun {
+    Typing,
+    Deleting(Step),
 }
 
 /// What the checker has to say about where the cursor is standing.
-#[derive(Default)]
-pub struct LintState {
-    pub message: String,
-    /// Every suggestion offered, of which `choice` names the one on show.
-    pub replacements: Vec<String>,
-    pub choice: usize,
-    /// Where a suggestion would go, in characters, or nowhere when none was offered.
-    pub at: Option<usize>,
-    pub len: usize,
-    /// The misspelled word, where that is what the checker objected to. Empty for a turn
-    /// of phrase, which is nothing a dictionary has an opinion about.
-    pub word: String,
-    /// The block the message above was worked out for.
-    block: Option<usize>,
-}
-
-impl LintState {
-    pub fn suggestion(&self) -> Option<&str> {
-        self.replacements.get(self.choice).map(String::as_str)
-    }
-}
-
-/// What the search is looking at, as the foot of the screen needs to read it.
-#[derive(Default)]
-pub struct SearchState {
-    pub open: bool,
-    pub needle: String,
-    pub count: usize,
-    /// Which occurrence is on show, or nowhere when the word is not in the document.
-    pub choice: Option<usize>,
-    /// Whether the writer asked for another occurrence of a word that has only the one.
-    /// Nothing moves, so the foot of the screen says why.
-    pub alone: bool,
-    found: search::Search,
-}
-
-#[derive(Clone)]
-struct Undo {
-    // Blocks and gaps are shared with the live document. An undo point is made on every
-    // edit; cloning every allocation on every keystroke quickly dwarfs the document.
-    blocks: Vec<Arc<String>>,
-    gaps: Vec<Arc<String>>,
-    index: usize,
-    cursor: usize,
-    anchor: Option<(usize, usize)>,
-    revision: u64,
-}
-
 pub struct Editor {
     blocks: Vec<Arc<String>>,
     /// Source around the blocks: before, between, and after. Keeping it separately lets
@@ -92,8 +42,8 @@ pub struct Editor {
     undo: VecDeque<Undo>,
     revision: u64,
     saved_revision: u64,
-    /// Whether the newest undo state is a run of typing that is still being added to.
-    typing: bool,
+    /// The kind of repeated edit still being added to the newest undo state.
+    edit_run: Option<EditRun>,
     /// Whether the typing has stopped. Nothing is said about a block while it is being
     /// typed into — a word half-written is not a word spelled wrong.
     settled: bool,
@@ -134,7 +84,7 @@ impl Editor {
             undo: VecDeque::new(),
             revision: 0,
             saved_revision: 0,
-            typing: false,
+            edit_run: None,
             settled: true,
             path,
             error,
@@ -200,137 +150,6 @@ impl Editor {
         }
     }
 
-    // ---- moving ----------------------------------------------------------------
-
-    /// Move the cursor, carrying a selection along with it where `extend` says so.
-    /// The rules at the edges of a block are the Qt editor's: up and down leave it, and
-    /// left and right only do so while a selection is being drawn.
-    pub fn move_cursor(&mut self, motion: Motion, extend: bool) {
-        if extend {
-            self.active.start_selection();
-        } else {
-            self.clear_selection();
-        }
-        match motion {
-            Motion::Character(step) => self.step_character(step, extend),
-            Motion::Word(step) => self.active.step_word(step),
-            Motion::Line(step) => self.step_line(step, extend),
-            Motion::LineEdge(step) => self.active.to_line_edge(step),
-            Motion::Block(step) => self.active.to_block_edge(step),
-            Motion::Document(step) => self.go_to_document_edge(step, extend),
-        }
-        self.record_cursor();
-    }
-
-    fn step_character(&mut self, step: Step, extend: bool) {
-        let at_edge = self.active.cursor() == if step > 0 { self.active.length() } else { 0 };
-        // The plain arrows have always stopped at a block's ends; only a selection
-        // being drawn carries on into the next one.
-        if at_edge && extend {
-            self.leave(step, extend);
-            return;
-        }
-        self.active.step(step);
-    }
-
-    fn step_line(&mut self, step: Step, extend: bool) {
-        if !self.active.step_line(step) {
-            self.leave(step, extend);
-        }
-    }
-
-    fn go_to_document_edge(&mut self, step: Step, extend: bool) {
-        let target = if step > 0 { self.blocks.len() - 1 } else { 0 };
-        self.go_to(target, extend);
-        self.active.to_block_edge(step);
-    }
-
-    /// Move into the neighbouring block, keeping to the edge the cursor comes in by, so
-    /// that one press of an arrow takes in one line rather than a whole block.
-    fn leave(&mut self, step: Step, extend: bool) {
-        let Some(target) = self.neighbour(step) else { return };
-        self.go_to(target, extend);
-        self.active.to_block_edge(-step);
-    }
-
-    fn neighbour(&self, step: Step) -> Option<usize> {
-        if step > 0 {
-            (self.index + 1 < self.blocks.len()).then(|| self.index + 1)
-        } else {
-            self.index.checked_sub(1)
-        }
-    }
-
-    /// Put the cursor in block `target`. A selection being drawn is pinned where it
-    /// started before the block it started in is left behind.
-    fn go_to(&mut self, target: usize, extend: bool) {
-        if target == self.index {
-            return;
-        }
-        if !extend {
-            let delta = self.commit();
-            let target =
-                if self.index < target { target.saturating_add_signed(delta) } else { target };
-            self.settle_in(target);
-            return;
-        }
-        // Nothing re-parses under a selection: the block being left keeps its shape, so
-        // the rows the selection covers stay where they were while it grows.
-        self.anchor
-            .get_or_insert((self.index, self.active.anchor().unwrap_or(self.active.cursor())));
-        self.store_active();
-        self.settle_in(target);
-        // Back in the block the selection is pinned in, it is that block's own again,
-        // pinned where it started rather than at the edge the cursor came in by.
-        if let Some((block, at)) = self.anchor.filter(|(block, _)| *block == self.index) {
-            let _ = block;
-            self.anchor = None;
-            self.active.pin(at);
-        }
-    }
-
-    /// Open block `target` for editing, with the cursor at its far edge for the caller to
-    /// move where it wants.
-    fn settle_in(&mut self, target: usize) {
-        self.index = target.min(self.blocks.len() - 1);
-        self.active = Active::new(&self.blocks[self.index], usize::MAX);
-        self.typing = false;
-    }
-
-    /// Take the cursor to block `target` and put it `at` characters in, which is what a
-    /// search occurrence and a restored position both want.
-    pub fn activate(&mut self, target: usize, at: usize) {
-        self.clear_selection();
-        self.go_to(target.min(self.blocks.len() - 1), false);
-        self.active.place(at);
-        self.record_cursor();
-    }
-
-    /// Put the cursor somewhere else in the block it is already in, which is what up and
-    /// down do once the rows on the screen have said where that is.
-    pub fn place_cursor(&mut self, at: usize, extend: bool) {
-        if extend {
-            self.active.start_selection();
-        } else {
-            self.clear_selection();
-        }
-        self.active.place(at);
-        self.record_cursor();
-    }
-
-    pub fn select_all(&mut self) {
-        self.store_active();
-        self.anchor = Some((0, 0));
-        self.go_to(self.blocks.len() - 1, true);
-        self.active.to_block_edge(1);
-        self.record_cursor();
-    }
-
-    pub fn clear_selection(&mut self) {
-        self.anchor = None;
-        self.active.drop_selection();
-    }
-
     // ---- editing ---------------------------------------------------------------
 
     /// Type `text` where the cursor is, over whatever is selected.
@@ -349,8 +168,13 @@ impl Editor {
         if self.take_spanning_selection("") {
             return;
         }
+        let selection = self.active.selection().is_some();
         if self.active.delete(step) {
-            self.record_edit();
+            if selection {
+                self.record_edit();
+            } else {
+                self.record_run(EditRun::Deleting(step));
+            }
             return;
         }
         if step < 0 {
@@ -394,7 +218,7 @@ impl Editor {
         self.remove_blocks(self.index, 1);
         self.index = previous;
         self.active = Active::new(&self.blocks[previous], cursor);
-        self.record_edit();
+        self.record_run(EditRun::Deleting(-1));
     }
 
     /// Replace a selection running through more than one block with `insert`, joining
@@ -491,215 +315,6 @@ impl Editor {
         }
     }
 
-    // ---- undo ------------------------------------------------------------------
-
-    fn snapshot(&self) -> Undo {
-        Undo {
-            blocks: self.blocks.clone(),
-            gaps: self.gaps.clone(),
-            index: self.index,
-            cursor: self.active.cursor(),
-            anchor: self.anchor,
-            revision: self.revision,
-        }
-    }
-
-    /// An edit that stands on its own — a block split, a merge, a selection deleted.
-    /// The whole of it is one thing to undo.
-    fn record_edit(&mut self) {
-        self.typing = false;
-        self.push_undo();
-    }
-
-    /// A keystroke. A run of them is one thing to undo rather than one per letter: the
-    /// writer means a word, not the letters of it. The run stays open until the typing
-    /// stops, or until anything that is not typing happens.
-    fn record_typing(&mut self) {
-        let open = self.typing;
-        self.typing = true;
-        if open {
-            self.store_active();
-            self.revision += 1;
-            self.refresh_newest();
-            return;
-        }
-        self.push_undo();
-    }
-
-    fn push_undo(&mut self) {
-        self.store_active();
-        self.revision += 1;
-        self.settled = false;
-        let state = self.snapshot();
-        self.undo.push_back(state);
-        if self.undo.len() > UNDO_LIMIT {
-            self.undo.pop_front();
-        }
-        self.update_lint();
-    }
-
-    /// Something that is not an edit happened where the cursor is: the newest state is
-    /// brought up to date rather than added to, and a run of typing is over.
-    fn record_cursor(&mut self) {
-        self.typing = false;
-        self.refresh_newest();
-    }
-
-    fn refresh_newest(&mut self) {
-        let state = self.snapshot();
-        match self.undo.back_mut() {
-            Some(last) => *last = state,
-            None => self.undo.push_back(state),
-        }
-        self.update_lint();
-    }
-
-    pub fn undo(&mut self) {
-        self.typing = false;
-        if self.undo.len() < 2 {
-            return;
-        }
-        self.undo.pop_back();
-        let state = self.undo.back().expect("a history has an opening state").clone();
-        self.blocks = state.blocks;
-        self.gaps = state.gaps;
-        self.index = state.index.min(self.blocks.len() - 1);
-        self.anchor = state.anchor;
-        self.revision = state.revision;
-        self.active = Active::new(&self.blocks[self.index], state.cursor);
-        self.update_lint();
-    }
-
-    // ---- the checker -----------------------------------------------------------
-
-    /// Whether the typing has stopped. The checker has its say once the writer pauses.
-    pub fn settle(&mut self, settled: bool) {
-        if self.settled == settled {
-            return;
-        }
-        self.settled = settled;
-        self.typing = self.typing && !settled;
-        self.update_lint();
-    }
-
-    pub fn settled(&self) -> bool {
-        self.settled
-    }
-
-    /// Look again at where the cursor is standing. The checker comes up a moment after
-    /// the first frame does, and a word taken into the dictionary changes what it would
-    /// say about every block at once.
-    pub fn refresh_lint(&mut self) {
-        self.lint.block = None;
-        self.update_lint();
-    }
-
-    fn update_lint(&mut self) {
-        let found = self
-            .settled
-            .then(|| lint::at(self.active.text(), self.active.cursor()))
-            .flatten();
-        self.lint.block = Some(self.index);
-        match found {
-            Some(found) => {
-                self.lint.message = found.message;
-                self.lint.word = found.word;
-                self.lint.len = found.len;
-                // A lint with nothing to suggest has nothing to accept either, and says
-                // so by having no span to put anything in.
-                self.lint.at = (!found.replacements.is_empty()).then_some(found.at);
-                self.lint.replacements = found.replacements;
-            }
-            None => self.lint = LintState { block: Some(self.index), ..LintState::default() },
-        }
-        self.lint.choice = 0;
-    }
-
-    /// Show the next suggestion for what the cursor is standing in, or the one before it.
-    /// They wrap around; only one is ever shown.
-    pub fn cycle_lint(&mut self, step: Step) {
-        let count = self.lint.replacements.len();
-        if count < 2 {
-            return;
-        }
-        self.lint.choice = (self.lint.choice as isize + step as isize).rem_euclid(count as isize) as usize;
-    }
-
-    /// Put the suggestion on show where the checker objected.
-    pub fn accept_lint(&mut self) {
-        let (Some(at), Some(replacement)) = (self.lint.at, self.lint.suggestion().map(str::to_string))
-        else {
-            return;
-        };
-        self.active.accept(at, self.lint.len, &replacement);
-        self.record_edit();
-    }
-
-    /// Take the misspelled word under the cursor into the writer's own dictionary. It is
-    /// spelled right from here on, in this document and the next.
-    pub fn learn(&mut self) {
-        if self.lint.word.is_empty() {
-            return;
-        }
-        lint::learn(&self.lint.word);
-        self.refresh_lint();
-    }
-
-    // ---- the search ------------------------------------------------------------
-
-    /// Open the search bar. The block being edited is re-read first: where a word turns
-    /// up is worked out over the blocks as they will be once it is rendered again, so
-    /// that walking to an occurrence never finds the document has moved underneath it.
-    pub fn open_search(&mut self) {
-        self.store_active();
-        self.commit();
-        self.index = self.index.min(self.blocks.len() - 1);
-        self.active = Active::new(&self.blocks[self.index], self.active.cursor());
-        self.clear_selection();
-        self.search.open = true;
-        self.search.alone = false;
-        let needle = self.search.needle.clone();
-        self.search_for(&needle);
-    }
-
-    /// The occurrence walked to is left selected: it is usually the very thing the
-    /// writer opened the search to type over.
-    pub fn close_search(&mut self) {
-        self.search.found.forget();
-        self.search.open = false;
-        self.search.count = 0;
-        self.search.choice = None;
-        self.search.alone = false;
-    }
-
-    pub fn search_for(&mut self, needle: &str) {
-        self.search.needle = needle.to_string();
-        let found = self.search.found.look_for(&self.blocks, needle);
-        self.search.alone = false;
-        self.show_occurrence(found);
-    }
-
-    /// A word that turns up once has nowhere to walk to. Nothing moves, and the flag is
-    /// what the foot of the screen says so with.
-    pub fn cycle_search(&mut self, step: Step) {
-        match self.search.found.walk(step) {
-            Some(found) => self.show_occurrence(Some(found)),
-            None => self.search.alone = self.search.found.count() == 1,
-        }
-    }
-
-    /// Put `found` under the cursor, selected from its start to its end: a word found is
-    /// a word to be typed over.
-    fn show_occurrence(&mut self, found: Option<search::Occurrence>) {
-        self.search.count = self.search.found.count() as usize;
-        self.search.choice = usize::try_from(self.search.found.choice()).ok();
-        let Some(found) = found else { return };
-        self.anchor = None;
-        self.go_to(found.block, false);
-        self.active.select(found.at, found.end);
-        self.record_cursor();
-    }
-
     // ---- the file --------------------------------------------------------------
 
     /// The document as it would be written out.
@@ -732,6 +347,7 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lint;
 
     /// A document made without touching the disk. The path is never written to.
     fn document(source: &str) -> Editor {
@@ -746,7 +362,7 @@ mod tests {
             undo: VecDeque::new(),
             revision: 0,
             saved_revision: 0,
-            typing: false,
+            edit_run: None,
             settled: false,
             path: PathBuf::from("/nowhere/post.md"),
             error: None,
@@ -881,6 +497,45 @@ mod tests {
         assert_eq!(texts(&editor), ["one two"]);
         editor.undo();
         assert_eq!(texts(&editor), ["one"]);
+    }
+
+    #[test]
+    fn undoes_a_run_of_backspaces_as_one_thing() {
+        let mut editor = document("one two");
+        editor.activate(0, 7);
+        for _ in 0..3 {
+            editor.delete(-1);
+        }
+        assert_eq!(texts(&editor), ["one "]);
+        editor.undo();
+        assert_eq!(texts(&editor), ["one two"]);
+    }
+
+    #[test]
+    fn changing_delete_direction_starts_a_new_undo_step() {
+        let mut editor = document("abcdef");
+        editor.activate(0, 3);
+        editor.delete(-1);
+        editor.delete(-1);
+        editor.delete(1);
+        editor.delete(1);
+        assert_eq!(texts(&editor), ["af"]);
+
+        editor.undo();
+        assert_eq!(texts(&editor), ["adef"]);
+        editor.undo();
+        assert_eq!(texts(&editor), ["abcdef"]);
+    }
+
+    #[test]
+    fn backspacing_across_a_block_boundary_stays_in_the_run() {
+        let mut editor = document("one\n\ntwo");
+        editor.activate(1, 1);
+        editor.delete(-1);
+        editor.delete(-1);
+        assert_eq!(texts(&editor), ["onewo"]);
+        editor.undo();
+        assert_eq!(texts(&editor), ["one", "two"]);
     }
 
     #[test]

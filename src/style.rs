@@ -5,6 +5,7 @@
 //! layout's business.
 
 use crate::parse::{self, Kind};
+use crate::text::{byte_offset, length};
 use pulldown_cmark::{Event, Parser, Tag};
 use std::ops::Range;
 
@@ -56,7 +57,7 @@ pub fn mask(text: &str, cursor: Cursor) -> Vec<u16> {
     // Marked per byte, which is what the parser counts in, and counted out per character
     // at the end. Every range a parser hands back falls on a character boundary.
     let mut bytes = vec![0u16; text.len()];
-    let cursor = cursor.map(|at| crate::text::byte_offset(text, at));
+    let cursor = cursor.map(|at| byte_offset(text, at));
     mark_prose(text, cursor, &mut bytes);
     text.char_indices().map(|(offset, _)| bytes[offset]).collect()
 }
@@ -199,10 +200,6 @@ pub fn prefix(line: &str, kind: Kind, edge: bool) -> Prefix {
         Kind::Heading | Kind::List | Kind::Quote | Kind::Paragraph => within(line, kind),
         Kind::Table | Kind::Image => Prefix::empty(),
     }
-}
-
-fn length(text: &str) -> usize {
-    text.chars().count()
 }
 
 fn fence(line: &str, edge: bool) -> Prefix {

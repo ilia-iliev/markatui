@@ -7,7 +7,7 @@
 //! before the first, between each pair, and after the last.
 
 use crate::parse;
-use crate::text::{byte_offset, char_at};
+use crate::text::byte_offset;
 use std::sync::Arc;
 
 /// Where a selection runs, in document order: a block and a byte offset into it at either
@@ -43,11 +43,6 @@ pub fn span(
         std::mem::swap(&mut first_at, &mut last_at);
     }
     Some(Span { first, first_at, last, last_at })
-}
-
-/// Whether a span covers nothing at all, which is a cursor rather than a selection.
-pub fn empty(span: &Span) -> bool {
-    span.first == span.last && span.first_at == span.last_at
 }
 
 /// What a selection reads, as it would be written to disk: the gaps between the blocks it
@@ -101,12 +96,6 @@ pub fn source(blocks: &[Arc<String>], gaps: &[Arc<String>]) -> String {
         text.push_str(&gaps[index + 1]);
     }
     text
-}
-
-/// Where a byte offset into block `index` stands, counted in characters — the unit the
-/// cursor moves in.
-pub fn cursor_at(blocks: &[Arc<String>], index: usize, byte: usize) -> usize {
-    blocks.get(index).map(|block| char_at(block, byte)).unwrap_or(0)
 }
 
 #[cfg(test)]

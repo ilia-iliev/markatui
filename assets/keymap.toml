@@ -1,0 +1,31 @@
+# markatui keymap. Change this file or run `markatui keymap <command> <key>`.
+
+# Document
+save = "ctrl+s"
+quit = "ctrl+q"
+
+# Edit
+undo = "ctrl+z"
+select_all = "ctrl+a"
+copy_selection = "ctrl+c"
+paste = "ctrl+v"
+
+# Find
+find = "ctrl+f"
+
+# View
+toggle_grammar = "ctrl+g"
+toggle_reading = "ctrl+r"
+
+# Formatting
+bold_selection = "ctrl+b"
+italic_selection = "ctrl+i"
+strike_selection = "ctrl+u"
+link_selection = "ctrl+shift+l"
+insert_image = "ctrl+shift+i"
+
+# Suggestions
+previous_suggestion = "ctrl+up"
+next_suggestion = "ctrl+down"
+accept_suggestion = "ctrl+enter"
+learn_word = "ctrl+shift+enter"

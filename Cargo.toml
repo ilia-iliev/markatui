@@ -8,13 +8,23 @@ rust-version = "1.95"
 
 [dependencies]
 crossterm = { version = "0.29", features = ["osc52"] }
-ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29", "unstable-rendered-line-info"] }
 unicode-segmentation = "1"
 unicode-width = "0.2"
 # The checker crosses threads, so Harper's concurrent representation is required. Its
 # thesaurus is not; suggestions used here come from lint rules and the spelling index.
 harper-core = { version = "2.8", default-features = false, features = ["concurrent"] }
 pulldown-cmark = "0.13.4"
+# Pictures: which protocol the terminal draws with, and the encoding of one for it. The
+# formats are the ones a post is written with; the rest of what `image` reads is weight.
+ratatui-image = { version = "11", default-features = false, features = ["crossterm"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
+
+[dev-dependencies]
+# A screen test draws a picture, and a picker is the only way to ask for one. The mosaic
+# is the picker a test can make: it asks the terminal nothing, because there is none.
+ratatui-image = { version = "11", default-features = false, features = ["crossterm"] }
 
 [profile.release]
 lto = "thin"

@@ -6,11 +6,17 @@
 //! columns. Cells remember where in the block's source they came from, and some of them
 //! came from nowhere at all — a bullet, a quote bar, a rule.
 
+mod table;
+mod wrap;
+
 use crate::parse::{self, Kind};
 use crate::style::{self, Cursor, Marker, Prefix};
+use crate::text::length;
 use std::ops::Range;
+use table::table;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
+use wrap::{caret_at, wrap};
 
 /// The glyph a hidden list bullet is drawn as, and the bar that stands in for a quote's
 /// angle bracket. Both are the width of the markdown they replace, so the words do not
@@ -72,29 +78,35 @@ pub struct Layout {
 pub struct Request<'a> {
     pub text: &'a str,
     pub cursor: Cursor,
+    /// Whether markdown around the cursor is exposed for editing.
+    pub reveal: bool,
     pub width: u16,
     /// Spans of the block the checker objected to, in characters.
     pub lints: &'a [Range<usize>],
+    /// How many rows the picture of a lone image takes, where there is one to draw. The
+    /// terminal decides that, so the caller is asked rather than the layout deciding.
+    pub picture: Option<u16>,
 }
 
 pub fn block(request: Request) -> Layout {
-    let Request { text, cursor, width, lints } = request;
+    let Request { text, cursor, reveal, width, lints, picture } = request;
     let kind = parse::kind(text);
     // A table and an image have no cursor mapping worth having: the columns of one and
     // the picture of the other stand where no character does. Under the cursor they open
-    // up into their markdown, which is the rule the Qt front end had for both.
-    let rendered = cursor.is_none();
+    // up into their markdown unless reading mode has asked for rendered text throughout.
+    let rendered = cursor.is_none() || !reveal;
     if kind == Kind::Table && rendered {
         return table(text);
     }
     if kind == Kind::Image && rendered {
-        return image(text);
+        return image(text, picture);
     }
 
-    let mask = style::mask(text, cursor);
+    let visible_cursor = reveal.then_some(cursor).flatten();
+    let mask = style::mask(text, visible_cursor);
     let mut rows = Vec::new();
     for line in lines(text) {
-        rows.extend(row_for(&line, kind, &mask, cursor, width, lints));
+        rows.extend(row_for(&line, kind, &mask, visible_cursor, width, lints));
     }
     if rows.is_empty() {
         rows.push(Row::default());
@@ -144,7 +156,7 @@ fn row_for(
     let prefix = style::prefix(&line.text, kind, line.edge);
     // The reveal rule, one line at a time: the structure of the line the cursor is on is
     // shown as the writer typed it, and every other line is drawn as it reads.
-    let revealed = cursor.is_some_and(|at| at >= line.at && at <= line.at + count(&line.text));
+    let revealed = cursor.is_some_and(|at| at >= line.at && at <= line.at + length(&line.text));
     let (lead, hanging) = decoration(&prefix, line, revealed);
 
     if matches!(prefix.marker, Marker::Fence | Marker::Whole) && !revealed {
@@ -242,7 +254,7 @@ pub const FILL: u16 = 1 << 13;
 /// The words of a line, as cells, with what is in front of them left off unless the
 /// cursor is on the line.
 fn content(line: &Line, prefix: &Prefix, mask: &[u16], lints: &[Range<usize>]) -> Vec<Cell> {
-    source_cells(line, prefix.len..count(&line.text), 0, mask, lints)
+    source_cells(line, prefix.len..length(&line.text), 0, mask, lints)
         .into_iter()
         // A marker inside the words is only drawn where the mask says it is on screen,
         // and a hard break's two trailing spaces are never worth a column.
@@ -279,104 +291,13 @@ fn source_cells(
         .collect()
 }
 
-fn count(text: &str) -> usize {
-    text.chars().count()
-}
-
-/// Break `body` into rows no wider than `width`, at a space where there is one. The first
-/// row carries `lead`; the rest hang under it on `hanging`.
-fn wrap(lead: Vec<Cell>, hanging: Vec<Cell>, body: Vec<Cell>, width: u16, bits: u16) -> Vec<Row> {
-    let mut rows = Vec::new();
-    let mut cells = lead;
-    let mut room = width.saturating_sub(cells.iter().map(|cell| cell.width).sum());
-    let mut rest = body.as_slice();
-
-    loop {
-        let fits = fitting(rest, room.max(1));
-        cells.extend_from_slice(&rest[..fits]);
-        rest = &rest[fits..];
-        rows.push(finish(cells, bits));
-        if rest.is_empty() {
-            break;
-        }
-        // A row that breaks at a space leaves it behind rather than opening the next one.
-        let dropped = rest.iter().take_while(|cell| cell.text == " ").count();
-        rest = &rest[dropped..];
-        if rest.is_empty() {
-            break;
-        }
-        cells = hanging.clone();
-        room = width.saturating_sub(cells.iter().map(|cell| cell.width).sum());
+/// A lone image: rows left empty for the terminal to draw the picture into, where there
+/// is one; and until there is — while the file is being read, or for good where there is
+/// no file to read — what it is of and where it is kept, in one muted line.
+fn image(text: &str, picture: Option<u16>) -> Layout {
+    if let Some(rows) = picture {
+        return Layout { rows: vec![Row::default(); rows as usize], caret: None };
     }
-    rows
-}
-
-/// How many cells of `rest` fit in `room`, breaking at the last space before the edge
-/// where there is one and cutting a long word where there is not.
-fn fitting(rest: &[Cell], room: u16) -> usize {
-    let mut used = 0u16;
-    let mut fits = 0;
-    let mut last_space = None;
-    for (index, cell) in rest.iter().enumerate() {
-        if used + cell.width > room {
-            break;
-        }
-        used += cell.width;
-        fits = index + 1;
-        if cell.text == " " {
-            last_space = Some(index);
-        }
-    }
-    if fits == rest.len() {
-        return fits;
-    }
-    // The space the row broke at belongs to neither row; the caller drops it.
-    match last_space {
-        Some(index) if index > 0 => index,
-        _ => fits.max(1),
-    }
-}
-
-/// Close a row off: where the caret can stand on it, worked out from the cells that came
-/// from somewhere.
-fn finish(cells: Vec<Cell>, bits: u16) -> Row {
-    let mut slots = Vec::new();
-    let mut column = 0u16;
-    let mut last = None;
-    for cell in &cells {
-        if let Some(source) = cell.source {
-            slots.push(Slot { column, source });
-            last = Some(source + cell.text.chars().count());
-        }
-        column += cell.width;
-    }
-    // One place past the end of the row, so a cursor at the end of a line has a column.
-    if let Some(source) = last {
-        slots.push(Slot { column, source });
-    }
-    Row { cells, bits, slots }
-}
-
-/// Where the caret goes for a cursor at `at`: the slot that stands exactly there, or the
-/// first one past it for a cursor sitting where nothing is drawn.
-fn caret_at(rows: &[Row], at: usize) -> (usize, u16) {
-    let mut fallback = (0, 0);
-    for (index, row) in rows.iter().enumerate() {
-        for slot in &row.slots {
-            if slot.source == at {
-                return (index, slot.column);
-            }
-            if slot.source < at {
-                fallback = (index, slot.column + 1);
-            }
-        }
-    }
-    fallback
-}
-
-/// A lone image, standing in for the picture until the graphics work lands: what it is
-/// of and where it is kept, in one muted line.
-fn image(text: &str) -> Layout {
     let path = parse::lone_image(text).unwrap_or_default();
     let alt: String = text
         .trim()
@@ -390,84 +311,12 @@ fn image(text: &str) -> Layout {
     Layout { rows: vec![Row { cells, bits: 0, slots: Vec::new() }], caret: None }
 }
 
-/// A table drawn as a table: the columns padded to the widest cell in each, and the pipes
-/// and the dash row replaced by box drawing. Nothing here maps back to the source, which
-/// is why a table under the cursor is shown as markdown instead.
-///
-/// A table wider than the column runs over rather than being mangled to fit: that it does
-/// not fit is the useful thing for the writer to see.
-fn table(text: &str) -> Layout {
-    let rows: Vec<Vec<String>> = text
-        .lines()
-        .map(|line| {
-            line.trim()
-                .trim_start_matches('|')
-                .trim_end_matches('|')
-                .split('|')
-                .map(|column| column.trim().to_string())
-                .collect()
-        })
-        .filter(|columns: &Vec<String>| !divider(columns))
-        .collect();
-    let Some(columns) = rows.iter().map(Vec::len).max() else {
-        return Layout::default();
-    };
-    let widths: Vec<u16> = (0..columns)
-        .map(|column| {
-            rows.iter()
-                .filter_map(|row| row.get(column))
-                .map(|text| text.width() as u16)
-                .max()
-                .unwrap_or(0)
-        })
-        .collect();
-
-    let mut drawn = vec![border(&widths, "┌", "┬", "┐")];
-    for (index, row) in rows.iter().enumerate() {
-        drawn.push(table_row(row, &widths, index == 0));
-        if index == 0 {
-            drawn.push(border(&widths, "├", "┼", "┤"));
-        }
-    }
-    drawn.push(border(&widths, "└", "┴", "┘"));
-    Layout { rows: drawn, caret: None }
-}
-
-fn divider(columns: &[String]) -> bool {
-    !columns.is_empty()
-        && columns
-            .iter()
-            .all(|column| !column.is_empty() && column.chars().all(|c| c == '-' || c == ':'))
-}
-
-fn border(widths: &[u16], left: &str, join: &str, right: &str) -> Row {
-    let mut cells = vec![glyph(left, style::MARKER)];
-    for (index, width) in widths.iter().enumerate() {
-        cells.extend((0..width + 2).map(|_| glyph("─", style::MARKER)));
-        cells.push(glyph(if index + 1 == widths.len() { right } else { join }, style::MARKER));
-    }
-    Row { cells, bits: 0, slots: Vec::new() }
-}
-
-fn table_row(row: &[String], widths: &[u16], head: bool) -> Row {
-    let bits = if head { style::BOLD } else { 0 };
-    let mut cells = vec![glyph("│", style::MARKER)];
-    for (index, width) in widths.iter().enumerate() {
-        let text = row.get(index).map(String::as_str).unwrap_or("");
-        cells.push(glyph(" ", 0));
-        cells.extend(text.graphemes(true).map(|part| glyph(part, bits)));
-        cells.extend(padding(width.saturating_sub(text.width() as u16) + 1));
-        cells.push(glyph("│", style::MARKER));
-    }
-    Row { cells, bits: 0, slots: Vec::new() }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn laid_out(text: &str, cursor: Cursor, width: u16) -> Layout {
-        block(Request { text, cursor, width, lints: &[] })
+        block(Request { text, cursor, reveal: true, width, lints: &[], picture: None })
     }
 
     /// What the rows read as, one string per row, with the caret drawn in.
@@ -507,6 +356,20 @@ mod tests {
         assert_eq!(drawn(&laid_out("## Title", Some(4), 40)), ["## T|itle"]);
         let bits = laid_out("## Title", None, 40).rows[0].cells[0].bits;
         assert!(bits & style::HEADING != 0);
+    }
+
+    #[test]
+    fn keeps_markdown_rendered_when_reveal_is_off() {
+        let layout = block(Request {
+            text: "## A **bold** heading",
+            cursor: Some(8),
+            reveal: false,
+            width: 30,
+            lints: &[],
+            picture: None,
+        });
+        assert!(!drawn(&layout)[0].contains('#'));
+        assert!(!drawn(&layout)[0].contains('*'));
     }
 
     #[test]
@@ -622,10 +485,34 @@ mod tests {
         assert_eq!(drawn(&laid_out("![A picture](pic.png)", Some(0), 40)), ["|![A picture](pic.png)"]);
     }
 
+    /// A picture the terminal is going to draw leaves the rows empty and stands out of
+    /// the way: what goes in them is not made of characters.
+    #[test]
+    fn leaves_room_for_a_picture_where_there_is_one_to_draw() {
+        let layout = block(Request {
+            text: "![A picture](pic.png)",
+            cursor: None,
+            reveal: true,
+            width: 40,
+            lints: &[],
+            picture: Some(6),
+        });
+        assert_eq!(layout.rows.len(), 6);
+        assert!(layout.rows.iter().all(|row| row.cells.is_empty()));
+    }
+
     #[test]
     fn washes_what_the_checker_objected_to() {
         let marks = vec![2..5, 7..7];
-        let layout = block(Request { text: "a bad b", cursor: None, width: 40, lints: &marks });
+        let layout =
+            block(Request {
+                text: "a bad b",
+                cursor: None,
+                reveal: true,
+                width: 40,
+                lints: &marks,
+                picture: None,
+            });
         let bits: Vec<bool> =
             layout.rows[0].cells.iter().map(|cell| cell.bits & style::LINT != 0).collect();
         assert_eq!(bits, [false, false, true, true, true, false, false]);
