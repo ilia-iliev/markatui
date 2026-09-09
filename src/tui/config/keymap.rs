@@ -1,7 +1,7 @@
 //! The editable keymap at `~/.config/markatui/keymap.toml`.
 
-use crate::storage;
 use super::lines;
+use crate::storage;
 use crate::tui::keys::{Binding, Keymap};
 
 use std::fs;
@@ -11,8 +11,7 @@ use std::path::PathBuf;
 const DEFAULT: &str = include_str!("../../../assets/keymap.toml");
 
 pub fn path() -> io::Result<PathBuf> {
-    storage::keymap_file()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is not set"))
+    storage::keymap_file().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is not set"))
 }
 
 /// Install the shipped keymap when this user does not have one yet.
@@ -30,14 +29,13 @@ pub fn install() -> io::Result<PathBuf> {
 pub fn load() -> (Keymap, Vec<String>) {
     let path = match install() {
         Ok(path) => path,
-        Err(error) => return (Keymap::default(), vec![format!("{}: {error}", storage::KEYMAP_FILE)]),
+        Err(error) => {
+            return (Keymap::default(), vec![format!("{}: {error}", storage::KEYMAP_FILE)]);
+        }
     };
     match fs::read_to_string(&path) {
         Ok(text) => read(&text),
-        Err(error) => (
-            Keymap::default(),
-            vec![format!("{}: {error}", path.display())],
-        ),
+        Err(error) => (Keymap::default(), vec![format!("{}: {error}", path.display())]),
     }
 }
 
@@ -50,11 +48,7 @@ pub fn show() -> Result<String, String> {
 }
 
 fn format_for_display(keymap: &Keymap) -> String {
-    let width = keymap
-        .bindings()
-        .map(|(_, name, _)| name.len())
-        .max()
-        .unwrap_or(0);
+    let width = keymap.bindings().map(|(_, name, _)| name.len()).max().unwrap_or(0);
     let mut lines = Vec::new();
     let mut previous_section = None;
     for (section, name, binding) in keymap.bindings() {

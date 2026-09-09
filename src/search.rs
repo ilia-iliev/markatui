@@ -166,7 +166,10 @@ mod tests {
         let mut search = Search::default();
         // Each letter is a search of its own: the writer is still typing.
         assert_eq!(search.look_for(&blocks, "mark"), Some(Occurrence { block: 0, at: 4, end: 8 }));
-        assert_eq!(search.look_for(&blocks, "marker"), Some(Occurrence { block: 0, at: 4, end: 10 }));
+        assert_eq!(
+            search.look_for(&blocks, "marker"),
+            Some(Occurrence { block: 0, at: 4, end: 10 })
+        );
         assert_eq!(search.choice(), Some(0));
         assert_eq!(search.count(), 3);
     }

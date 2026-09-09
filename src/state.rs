@@ -22,10 +22,7 @@ fn parse_entry(line: &str) -> Option<(String, usize)> {
 /// The block the cursor was left in last time this file was open.
 pub fn recall(path: &Path) -> Option<usize> {
     let path = path.to_string_lossy();
-    entries()
-        .into_iter()
-        .find(|(known, _)| *known == path)
-        .map(|(_, index)| index)
+    entries().into_iter().find(|(known, _)| *known == path).map(|(_, index)| index)
 }
 
 pub fn remember(path: &Path, index: usize) {
@@ -37,10 +34,7 @@ pub fn remember(path: &Path, index: usize) {
     kept.extend(entries().into_iter().filter(|(known, _)| *known != path));
     kept.truncate(LIMIT);
 
-    let text: String = kept
-        .iter()
-        .map(|(path, index)| format!("{index}\t{path}\n"))
-        .collect();
+    let text: String = kept.iter().map(|(path, index)| format!("{index}\t{path}\n")).collect();
     crate::storage::replace(&store, text.as_bytes());
 }
 

@@ -57,10 +57,7 @@ pub struct Row {
 impl Row {
     /// The source offset the caret means at `column`, or the nearest one this row has.
     pub fn source_at(&self, column: u16) -> Option<usize> {
-        let nearest = self
-            .slots
-            .iter()
-            .min_by_key(|slot| slot.column.abs_diff(column))?;
+        let nearest = self.slots.iter().min_by_key(|slot| slot.column.abs_diff(column))?;
         Some(nearest.source)
     }
 }
@@ -132,11 +129,7 @@ fn lines(text: &str) -> Vec<Line> {
         .into_iter()
         .enumerate()
         .map(|(index, line)| {
-            let line = Line {
-                at,
-                text: line.to_string(),
-                edge: index == 0 || index == last,
-            };
+            let line = Line { at, text: line.to_string(), edge: index == 0 || index == last };
             at += line.text.chars().count() + 1;
             line
         })
@@ -299,13 +292,8 @@ fn image(text: &str, picture: Option<u16>) -> Layout {
         return Layout { rows: vec![Row::default(); rows as usize], caret: None };
     }
     let path = parse::lone_image(text).unwrap_or_default();
-    let alt: String = text
-        .trim()
-        .trim_start_matches("![")
-        .split(']')
-        .next()
-        .unwrap_or_default()
-        .to_string();
+    let alt: String =
+        text.trim().trim_start_matches("![").split(']').next().unwrap_or_default().to_string();
     let line = format!("{IMAGE} {alt}  {path}");
     let cells = line.graphemes(true).map(|part| glyph(part, style::MARKER)).collect();
     Layout { rows: vec![Row { cells, bits: 0, slots: Vec::new() }], caret: None }
@@ -428,7 +416,14 @@ mod tests {
     fn gives_a_wide_character_two_columns() {
         let row = &laid_out("🙂a", None, 40).rows[0];
         assert_eq!(row.cells[0].width, 2);
-        assert_eq!(row.slots, [Slot { column: 0, source: 0 }, Slot { column: 2, source: 1 }, Slot { column: 3, source: 2 }]);
+        assert_eq!(
+            row.slots,
+            [
+                Slot { column: 0, source: 0 },
+                Slot { column: 2, source: 1 },
+                Slot { column: 3, source: 2 }
+            ]
+        );
     }
 
     #[test]
@@ -482,7 +477,10 @@ mod tests {
     fn says_what_an_image_is_of_and_where_it_is_kept() {
         assert_eq!(drawn(&laid_out("![A picture](pic.png)", None, 40)), ["▣ A picture  pic.png"]);
         // Under the cursor it is markdown like anything else.
-        assert_eq!(drawn(&laid_out("![A picture](pic.png)", Some(0), 40)), ["|![A picture](pic.png)"]);
+        assert_eq!(
+            drawn(&laid_out("![A picture](pic.png)", Some(0), 40)),
+            ["|![A picture](pic.png)"]
+        );
     }
 
     /// A picture the terminal is going to draw leaves the rows empty and stands out of
@@ -504,15 +502,14 @@ mod tests {
     #[test]
     fn washes_what_the_checker_objected_to() {
         let marks = vec![2..5, 7..7];
-        let layout =
-            block(Request {
-                text: "a bad b",
-                cursor: None,
-                reveal: true,
-                width: 40,
-                lints: &marks,
-                picture: None,
-            });
+        let layout = block(Request {
+            text: "a bad b",
+            cursor: None,
+            reveal: true,
+            width: 40,
+            lints: &marks,
+            picture: None,
+        });
         let bits: Vec<bool> =
             layout.rows[0].cells.iter().map(|cell| cell.bits & style::LINT != 0).collect();
         assert_eq!(bits, [false, false, true, true, true, false, false]);

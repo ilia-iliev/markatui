@@ -65,10 +65,8 @@ impl Editor {
     /// the first frame does, and a word taken into the dictionary changes what it would
     /// say about every block at once.
     pub fn refresh_lint(&mut self) {
-        let found = self
-            .settled
-            .then(|| lint::at(self.active.text(), self.active.cursor()))
-            .flatten();
+        let found =
+            self.settled.then(|| lint::at(self.active.text(), self.active.cursor())).flatten();
         match found {
             Some(found) => {
                 self.lint.message = found.message;
@@ -92,12 +90,14 @@ impl Editor {
         if count < 2 {
             return;
         }
-        self.lint.choice = (self.lint.choice as isize + step as isize).rem_euclid(count as isize) as usize;
+        self.lint.choice =
+            (self.lint.choice as isize + step as isize).rem_euclid(count as isize) as usize;
     }
 
     /// Put the suggestion on show where the checker objected.
     pub fn accept_lint(&mut self) {
-        let (Some(at), Some(replacement)) = (self.lint.at, self.lint.suggestion().map(str::to_string))
+        let (Some(at), Some(replacement)) =
+            (self.lint.at, self.lint.suggestion().map(str::to_string))
         else {
             return;
         };

@@ -48,9 +48,7 @@ impl App {
         let Some((index, within)) = landing else {
             return;
         };
-        let at = self.document.rows(index)[within]
-            .source_at(column)
-            .unwrap_or(0);
+        let at = self.document.rows(index)[within].source_at(column).unwrap_or(0);
 
         let distance = step as isize * self.viewport as isize;
         let last_page = height.saturating_sub(self.viewport);

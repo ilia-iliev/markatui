@@ -38,4 +38,3 @@ pub(super) fn stop(capabilities: Capabilities) -> io::Result<()> {
     execute!(io::stdout(), event::DisableBracketedPaste, LeaveAlternateScreen)?;
     terminal::disable_raw_mode()
 }
-

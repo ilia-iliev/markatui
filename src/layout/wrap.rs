@@ -7,7 +7,13 @@ use super::{Cell, Row, Slot};
 
 /// Break `body` into rows no wider than `width`, at a space where there is one. The first
 /// row carries `lead`; the rest hang under it on `hanging`.
-pub(super) fn wrap(lead: Vec<Cell>, hanging: Vec<Cell>, body: Vec<Cell>, width: u16, bits: u16) -> Vec<Row> {
+pub(super) fn wrap(
+    lead: Vec<Cell>,
+    hanging: Vec<Cell>,
+    body: Vec<Cell>,
+    width: u16,
+    bits: u16,
+) -> Vec<Row> {
     let mut rows = Vec::new();
     let mut cells = lead;
     let mut room = width.saturating_sub(cells.iter().map(|cell| cell.width).sum());

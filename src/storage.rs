@@ -80,10 +80,7 @@ fn temporary_file(path: &Path) -> io::Result<(PathBuf, File)> {
             Err(error) => return Err(error),
         }
     }
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        "could not create a unique temporary file",
-    ))
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, "could not create a unique temporary file"))
 }
 
 fn write_and_replace(

@@ -48,11 +48,8 @@ const FOOT: u16 = 1;
 /// The three modes the writer can be in, each with the word it is written down as between
 /// runs and the two flags it means. The plain mode is first, and so is what an unreadable
 /// word or a first run comes to.
-const MODES: [(&str, bool, bool); 3] = [
-    ("plain", true, false),
-    ("grammar-off", false, false),
-    ("reading", false, true),
-];
+const MODES: [(&str, bool, bool); 3] =
+    [("plain", true, false), ("grammar-off", false, false), ("reading", false, true)];
 
 /// What the writer is being asked, if anything. The document is behind all of them.
 #[derive(PartialEq, Eq)]
@@ -150,10 +147,8 @@ impl App {
     /// Go into the mode `word` names. A word from no mode there is — an older store, or a
     /// newer one — leaves the writer in the plain mode rather than somewhere odd.
     fn set_mode(&mut self, word: &str) {
-        let (_, grammar, reading) = MODES
-            .iter()
-            .find(|(name, ..)| *name == word)
-            .unwrap_or(&MODES[0]);
+        let (_, grammar, reading) =
+            MODES.iter().find(|(name, ..)| *name == word).unwrap_or(&MODES[0]);
         (self.grammar, self.reading) = (*grammar, *reading);
     }
 
@@ -163,7 +158,10 @@ impl App {
         state::remember_mode(self.mode_word());
     }
 
-    fn loop_until_quit(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
+    fn loop_until_quit(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> io::Result<()> {
         while !self.quit {
             terminal.draw(|frame| self.draw(frame))?;
             self.wait()?;
@@ -388,10 +386,8 @@ impl App {
         // nothing is painted over it.
         frame.buffer_mut().set_style(area, theme::base());
         let footer = self.footer(area.width);
-        let footer_heights: Vec<_> = footer
-            .iter()
-            .map(|message| view::footer_height(area, message))
-            .collect();
+        let footer_heights: Vec<_> =
+            footer.iter().map(|message| view::footer_height(area, message)).collect();
         // The band is there with nothing in it as readily as with something, so that the
         // checker speaking up does not move the document under the writer. A message
         // longer than the column gets every row it wraps onto rather than being clipped.
@@ -488,10 +484,7 @@ mod tests {
 
     #[test]
     fn page_keys_scroll_and_move_the_cursor() {
-        let source = (0..20)
-            .map(|line| format!("line {line}"))
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        let source = (0..20).map(|line| format!("line {line}")).collect::<Vec<_>>().join("\n\n");
         let path = document("pages", &source);
         let mut app = app(&path);
         let mut terminal = Terminal::new(TestBackend::new(90, 9)).expect("a test screen");
@@ -521,10 +514,7 @@ mod tests {
         let rows = until_the_picture_lands(&mut app, &mut terminal);
 
         assert!(rows.iter().filter(|row| row.contains('▄')).count() >= 6, "{rows:#?}");
-        assert!(
-            !rows[14].contains('▄'),
-            "the picture ran into the foot of the screen: {rows:#?}"
-        );
+        assert!(!rows[14].contains('▄'), "the picture ran into the foot of the screen: {rows:#?}");
         forget(&path);
     }
 

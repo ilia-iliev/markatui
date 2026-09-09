@@ -5,10 +5,7 @@
 /// Where the character position `at` falls in `text`, which Rust counts in bytes.
 /// A position past the end lands at the end rather than running off it.
 pub fn byte_offset(text: &str, at: usize) -> usize {
-    text.char_indices()
-        .nth(at)
-        .map(|(offset, _)| offset)
-        .unwrap_or(text.len())
+    text.char_indices().nth(at).map(|(offset, _)| offset).unwrap_or(text.len())
 }
 
 /// Where a byte offset into `text` stands, counted in characters.

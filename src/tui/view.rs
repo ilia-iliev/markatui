@@ -111,9 +111,8 @@ impl Document {
         let blocks = editor.blocks();
         // Where the active block stood before, so that rows appearing above it can be
         // taken off the scroll rather than shoving the writer's line down the screen.
-        let was = (self.active == editor.index())
-            .then(|| self.tops.get(self.active).copied())
-            .flatten();
+        let was =
+            (self.active == editor.index()).then(|| self.tops.get(self.active).copied()).flatten();
         let mut layouts = Vec::with_capacity(blocks.len());
         let mut sources = Vec::with_capacity(blocks.len());
         let mut paths = Vec::with_capacity(blocks.len());
@@ -206,8 +205,13 @@ pub fn draw(frame: &mut Frame, area: Rect, editor: &Editor, document: &Document,
     for line in 0..area.height {
         let row = scroll + line as usize;
         let Some((index, within)) = document.at(row) else { continue };
-        paint(frame, Rect { y: area.y + line, height: 1, ..column },
-              &document.rows(index)[within], index, &selection);
+        paint(
+            frame,
+            Rect { y: area.y + line, height: 1, ..column },
+            &document.rows(index)[within],
+            index,
+            &selection,
+        );
     }
 
     if let Some((row, at)) = document.caret()
@@ -321,7 +325,8 @@ pub fn footer(frame: &mut Frame, area: Rect, text: &str) {
         }
     }
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(text.to_string(), style))).wrap(Wrap { trim: false }),
+        Paragraph::new(Line::from(Span::styled(text.to_string(), style)))
+            .wrap(Wrap { trim: false }),
         column,
     );
 }

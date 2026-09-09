@@ -10,7 +10,6 @@ pub use findings::{LintState, SearchState};
 pub use motion::Motion;
 
 use crate::active::{Active, Step};
-use undo::Undo;
 use crate::blocks::{self, Span};
 use crate::parse;
 use crate::state;
@@ -20,6 +19,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use undo::Undo;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EditRun {
@@ -65,10 +65,9 @@ impl Editor {
         let (segments, error) = match fs::read_to_string(&path) {
             Ok(source) => (parse::segments(&source), None),
             Err(error) if error.kind() == ErrorKind::NotFound => (parse::segments(""), None),
-            Err(error) => (
-                parse::segments(""),
-                Some(format!("Could not open {}: {error}", path.display())),
-            ),
+            Err(error) => {
+                (parse::segments(""), Some(format!("Could not open {}: {error}", path.display())))
+            }
         };
 
         let blocks: Vec<Arc<String>> = segments.blocks.into_iter().map(Arc::new).collect();
@@ -121,11 +120,7 @@ impl Editor {
     /// whatever has been typed into it, which the stored copy only catches up with on
     /// the next keystroke.
     pub fn block(&self, index: usize) -> &str {
-        if index == self.index {
-            self.active.text()
-        } else {
-            &self.blocks[index]
-        }
+        if index == self.index { self.active.text() } else { &self.blocks[index] }
     }
 
     /// Which blocks a selection covers, and how much of the first and last. `None` where

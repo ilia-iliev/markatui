@@ -72,12 +72,7 @@ fn spoken_for(text: &str, name: &str, on: bool) -> String {
             header = header.or(inside.then_some(at));
             continue;
         }
-        if inside
-            && trimmed
-                .split('=')
-                .next()
-                .is_some_and(|key| key.trim() == name)
-        {
+        if inside && trimmed.split('=').next().is_some_and(|key| key.trim() == name) {
             lines[at] = setting;
             return joined(lines);
         }
@@ -112,10 +107,7 @@ mod tests {
 
     #[test]
     fn opens_the_table_where_there_is_none() {
-        assert_eq!(
-            muted("", "UseTitleCase"),
-            "[checks]\nUseTitleCase = false\n"
-        );
+        assert_eq!(muted("", "UseTitleCase"), "[checks]\nUseTitleCase = false\n");
         assert_eq!(
             muted("content_width = 80\n", "UseTitleCase"),
             "content_width = 80\n\n[checks]\nUseTitleCase = false\n"

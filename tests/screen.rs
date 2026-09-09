@@ -5,8 +5,8 @@ use markatui::editor::{Editor, Motion};
 use markatui::tui::images::Gallery;
 use markatui::tui::view;
 use ratatui::Terminal;
-use ratatui::buffer::CellDiffOption;
 use ratatui::backend::TestBackend;
+use ratatui::buffer::CellDiffOption;
 use ratatui_image::picker::Picker;
 
 /// The sample document drawn on a screen `width` by `height`, as one string per row with
@@ -57,9 +57,7 @@ fn drawn_and_resent(
     let buffer = terminal.backend().buffer().clone();
     let rows = (0..height)
         .map(|y| {
-            let row: String = (0..width)
-                .map(|x| buffer[(x, y)].symbol().to_string())
-                .collect();
+            let row: String = (0..width).map(|x| buffer[(x, y)].symbol().to_string()).collect();
             row.trim_end().to_string()
         })
         .collect();
@@ -231,8 +229,7 @@ fn sends_the_frame_whole_when_a_picture_moves() {
 /// goes down with it: the block being written in stays where the writer is looking.
 #[test]
 fn takes_the_rows_a_late_picture_adds_off_the_scroll() {
-    let directory =
-        std::env::temp_dir().join(format!("markatui-picture-{}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!("markatui-picture-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a temporary directory");
     let path = directory.join("post.md");
     std::fs::write(&path, "![A picture](image.png)\n\nThe words under it.\n").expect("a document");

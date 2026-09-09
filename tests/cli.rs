@@ -2,10 +2,8 @@ use std::process::Command;
 
 #[test]
 fn help_flag_prints_help_without_opening_a_file() {
-    let output = Command::new(env!("CARGO_BIN_EXE_markatui"))
-        .arg("-h")
-        .output()
-        .expect("markatui runs");
+    let output =
+        Command::new(env!("CARGO_BIN_EXE_markatui")).arg("-h").output().expect("markatui runs");
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -16,10 +14,8 @@ fn help_flag_prints_help_without_opening_a_file() {
 
 #[test]
 fn long_help_flag_prints_help_without_opening_a_file() {
-    let output = Command::new(env!("CARGO_BIN_EXE_markatui"))
-        .arg("--help")
-        .output()
-        .expect("markatui runs");
+    let output =
+        Command::new(env!("CARGO_BIN_EXE_markatui")).arg("--help").output().expect("markatui runs");
 
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("Usage:"));
@@ -35,10 +31,7 @@ fn unknown_flag_reports_the_available_flags() {
 
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("unknown option '-nonexistant_flag'"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("unknown option '-nonexistant_flag'"), "{stderr}");
     assert!(stderr.contains("Available options:"), "{stderr}");
     assert!(stderr.contains("-h, --help"), "{stderr}");
 }
@@ -83,24 +76,17 @@ fn turns_a_check_off_and_says_so_in_the_listing() {
         command
     };
 
-    let turned_off = markatui()
-        .args(["-checks", "off", "UseTitleCase"])
-        .output()
-        .expect("markatui runs");
+    let turned_off =
+        markatui().args(["-checks", "off", "UseTitleCase"]).output().expect("markatui runs");
     assert!(turned_off.status.success(), "{turned_off:?}");
 
     let written = std::fs::read_to_string(config.join("markatui/config.toml")).expect("a config");
-    assert!(
-        written.contains("[checks]\nUseTitleCase = false"),
-        "{written}"
-    );
+    assert!(written.contains("[checks]\nUseTitleCase = false"), "{written}");
 
     let listed = markatui().arg("-checks").output().expect("markatui runs");
     let stdout = String::from_utf8_lossy(&listed.stdout);
-    let line = stdout
-        .lines()
-        .find(|line| line.starts_with("UseTitleCase "))
-        .expect("the check is listed");
+    let line =
+        stdout.lines().find(|line| line.starts_with("UseTitleCase ")).expect("the check is listed");
     assert!(line.ends_with("[off]"), "{line}");
 
     std::fs::remove_dir_all(config).expect("the temporary config goes");

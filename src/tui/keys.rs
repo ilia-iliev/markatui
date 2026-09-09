@@ -73,24 +73,84 @@ pub const COMMANDS: [Command; 19] = [
     Command { section: "Edit", name: "copy_selection", default: "ctrl+c", action: Action::Copy },
     Command { section: "Edit", name: "paste", default: "ctrl+v", action: Action::Paste },
     Command { section: "Find", name: "find", default: "ctrl+f", action: Action::OpenSearch },
-    Command { section: "View", name: "toggle_grammar", default: "ctrl+g", action: Action::ToggleGrammar },
-    Command { section: "View", name: "toggle_reading", default: "ctrl+r", action: Action::ToggleReading },
-    Command { section: "Formatting", name: "bold_selection", default: "ctrl+b", action: Action::Surround("**") },
-    Command { section: "Formatting", name: "italic_selection", default: "ctrl+i", action: Action::Surround("*") },
-    Command { section: "Formatting", name: "strike_selection", default: "ctrl+u", action: Action::Surround("~~") },
-    Command { section: "Formatting", name: "link_selection", default: "ctrl+shift+l", action: Action::Link("") },
-    Command { section: "Formatting", name: "insert_image", default: "ctrl+shift+i", action: Action::Link("!") },
+    Command {
+        section: "View",
+        name: "toggle_grammar",
+        default: "ctrl+g",
+        action: Action::ToggleGrammar,
+    },
+    Command {
+        section: "View",
+        name: "toggle_reading",
+        default: "ctrl+r",
+        action: Action::ToggleReading,
+    },
+    Command {
+        section: "Formatting",
+        name: "bold_selection",
+        default: "ctrl+b",
+        action: Action::Surround("**"),
+    },
+    Command {
+        section: "Formatting",
+        name: "italic_selection",
+        default: "ctrl+i",
+        action: Action::Surround("*"),
+    },
+    Command {
+        section: "Formatting",
+        name: "strike_selection",
+        default: "ctrl+u",
+        action: Action::Surround("~~"),
+    },
+    Command {
+        section: "Formatting",
+        name: "link_selection",
+        default: "ctrl+shift+l",
+        action: Action::Link(""),
+    },
+    Command {
+        section: "Formatting",
+        name: "insert_image",
+        default: "ctrl+shift+i",
+        action: Action::Link("!"),
+    },
     // Control walks the suggestions the checker offered rather than the text; where it
     // has offered none, the caller lets it move the cursor as it always did.
-    Command { section: "Suggestions", name: "previous_suggestion", default: "ctrl+up", action: Action::CycleLint(-1) },
-    Command { section: "Suggestions", name: "next_suggestion", default: "ctrl+down", action: Action::CycleLint(1) },
-    Command { section: "Suggestions", name: "accept_suggestion", default: "ctrl+enter", action: Action::AcceptLint },
+    Command {
+        section: "Suggestions",
+        name: "previous_suggestion",
+        default: "ctrl+up",
+        action: Action::CycleLint(-1),
+    },
+    Command {
+        section: "Suggestions",
+        name: "next_suggestion",
+        default: "ctrl+down",
+        action: Action::CycleLint(1),
+    },
+    Command {
+        section: "Suggestions",
+        name: "accept_suggestion",
+        default: "ctrl+enter",
+        action: Action::AcceptLint,
+    },
     // The word is spelled the way the writer meant it, and the dictionary is the one
     // that is wrong. It keeps the word from here on.
-    Command { section: "Suggestions", name: "learn_word", default: "ctrl+shift+enter", action: Action::Learn },
+    Command {
+        section: "Suggestions",
+        name: "learn_word",
+        default: "ctrl+shift+enter",
+        action: Action::Learn,
+    },
     // The checker is right about the words and wrong about this writer. The rule that
     // objected goes into their config, and stops objecting for good.
-    Command { section: "Suggestions", name: "mute_check", default: "alt+g", action: Action::MuteCheck },
+    Command {
+        section: "Suggestions",
+        name: "mute_check",
+        default: "alt+g",
+        action: Action::MuteCheck,
+    },
 ];
 
 /// A keystroke as the config writes it: `ctrl+shift+l`, `f5`, `esc`.
@@ -102,9 +162,8 @@ pub struct Binding {
 
 /// The modifiers a binding can name. The kitty protocol reports others — super, hyper,
 /// meta — and a binding that names none of them should not be thrown by one arriving.
-const NAMED: KeyModifiers = KeyModifiers::CONTROL
-    .union(KeyModifiers::SHIFT)
-    .union(KeyModifiers::ALT);
+const NAMED: KeyModifiers =
+    KeyModifiers::CONTROL.union(KeyModifiers::SHIFT).union(KeyModifiers::ALT);
 
 /// The keys that have a name of their own, and the names the config writes them by. Read
 /// both ways — [`Binding::parse`] looks a name up here and [`Display`] looks a key
@@ -209,9 +268,8 @@ impl Default for Keymap {
         let keys = COMMANDS
             .iter()
             .map(|command| {
-                let unreadable = || {
-                    panic!("{} is on an unreadable key: {}", command.name, command.default)
-                };
+                let unreadable =
+                    || panic!("{} is on an unreadable key: {}", command.name, command.default);
                 Binding::parse(command.default).unwrap_or_else(unreadable)
             })
             .collect();
@@ -449,26 +507,11 @@ mod tests {
     /// answers the quit prompt does.
     #[test]
     fn asks_before_turning_a_check_off() {
-        assert_eq!(
-            editing(press(KeyCode::Char('g'), KeyModifiers::ALT)),
-            Action::MuteCheck
-        );
-        assert_eq!(
-            muting(press(KeyCode::Char('y'), KeyModifiers::NONE)),
-            Action::MuteCheck
-        );
-        assert_eq!(
-            muting(press(KeyCode::Enter, KeyModifiers::NONE)),
-            Action::MuteCheck
-        );
-        assert_eq!(
-            muting(press(KeyCode::Char('n'), KeyModifiers::NONE)),
-            Action::Cancel
-        );
-        assert_eq!(
-            muting(press(KeyCode::Esc, KeyModifiers::NONE)),
-            Action::Cancel
-        );
+        assert_eq!(editing(press(KeyCode::Char('g'), KeyModifiers::ALT)), Action::MuteCheck);
+        assert_eq!(muting(press(KeyCode::Char('y'), KeyModifiers::NONE)), Action::MuteCheck);
+        assert_eq!(muting(press(KeyCode::Enter, KeyModifiers::NONE)), Action::MuteCheck);
+        assert_eq!(muting(press(KeyCode::Char('n'), KeyModifiers::NONE)), Action::Cancel);
+        assert_eq!(muting(press(KeyCode::Esc, KeyModifiers::NONE)), Action::Cancel);
     }
 
     #[test]
@@ -497,7 +540,10 @@ mod tests {
 
     #[test]
     fn gives_the_search_bar_the_keys_while_it_is_open() {
-        assert_eq!(searching(press(KeyCode::Char('x'), KeyModifiers::NONE)), Action::Type("x".into()));
+        assert_eq!(
+            searching(press(KeyCode::Char('x'), KeyModifiers::NONE)),
+            Action::Type("x".into())
+        );
         assert_eq!(searching(press(KeyCode::Enter, KeyModifiers::NONE)), Action::CloseSearch);
         assert_eq!(searching(press(KeyCode::Esc, KeyModifiers::NONE)), Action::CloseSearch);
         assert_eq!(searching(press(KeyCode::Down, KeyModifiers::CONTROL)), Action::CycleSearch(1));

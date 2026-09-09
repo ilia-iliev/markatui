@@ -275,8 +275,7 @@ fn numbered(body: &str) -> Option<String> {
 /// Whether the line is a setext underline: the `=====` or `-----` that makes the line
 /// above it a heading.
 fn setext(body: &str) -> bool {
-    !body.is_empty()
-        && (body.chars().all(|c| c == '=') || body.chars().all(|c| c == '-'))
+    !body.is_empty() && (body.chars().all(|c| c == '=') || body.chars().all(|c| c == '-'))
 }
 
 #[cfg(test)]

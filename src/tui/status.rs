@@ -19,10 +19,7 @@ impl App {
             return vec![question, "[y] [n] [esc]".to_string()];
         }
         if let Mode::Muting(rule) = &self.mode {
-            return vec![
-                format!("Never show {rule} again?"),
-                "[y] [n] [esc]".to_string(),
-            ];
+            return vec![format!("Never show {rule} again?"), "[y] [n] [esc]".to_string()];
         }
         if self.mode == Mode::Searching {
             return vec![self.search_line(width)];

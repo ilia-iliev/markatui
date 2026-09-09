@@ -424,8 +424,11 @@ mod tests {
     #[test]
     fn stops_at_the_writing_rather_than_the_whitespace_round_it() {
         //             0123456789
-        let mut active = at("  two  
-x", 7);
+        let mut active = at(
+            "  two  
+x",
+            7,
+        );
         active.to_line_edge(-1);
         assert_eq!(active.cursor(), 2);
         active.to_line_edge(1);

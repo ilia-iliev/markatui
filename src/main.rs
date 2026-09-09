@@ -52,9 +52,7 @@ fn main() {
 
 /// The name of a flag, one dash or two, or nothing if the argument is not one.
 fn flag(argument: &str) -> Option<&str> {
-    let name = argument
-        .strip_prefix("--")
-        .or_else(|| argument.strip_prefix('-'))?;
+    let name = argument.strip_prefix("--").or_else(|| argument.strip_prefix('-'))?;
     (!name.is_empty()).then_some(name)
 }
 

@@ -33,10 +33,7 @@ pub fn segments(source: &str) -> Segments {
         };
     }
 
-    let blocks = ranges
-        .iter()
-        .map(|range| source[range.clone()].to_string())
-        .collect();
+    let blocks = ranges.iter().map(|range| source[range.clone()].to_string()).collect();
     let mut gaps = Vec::with_capacity(ranges.len() + 1);
     gaps.push(source[..ranges[0].start].to_string());
     for pair in ranges.windows(2) {
@@ -241,10 +238,9 @@ mod tests {
 
     #[test]
     fn exact_segments_keep_html_and_reference_definitions() {
-        for source in [
-            "<section>\nraw html\n</section>\n",
-            "[home]: https://example.com\n\nGo [home].\n",
-        ] {
+        for source in
+            ["<section>\nraw html\n</section>\n", "[home]: https://example.com\n\nGo [home].\n"]
+        {
             assert_eq!(exact_roundtrip(source), source);
             assert!(segments(source).blocks.iter().any(|block| !block.is_empty()));
         }
@@ -278,5 +274,4 @@ mod tests {
         assert_eq!(lone_image("# heading"), None);
         assert_eq!(lone_image("![a](1.png) ![b](2.png)"), None);
     }
-
 }

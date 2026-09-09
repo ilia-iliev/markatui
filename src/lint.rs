@@ -69,9 +69,7 @@ pub fn has_rule(name: &str) -> bool {
     static NAMES: OnceLock<FlatConfig> = OnceLock::new();
     NAMES
         .get_or_init(|| {
-            StructuredConfig::curated()
-                .to_flat_config()
-                .expect("the curated settings are a config")
+            StructuredConfig::curated().to_flat_config().expect("the curated settings are a config")
         })
         .has_rule(name)
 }
@@ -125,11 +123,7 @@ pub fn preload(checks: &Checks) {
         }));
         let (send, receive) = mpsc::channel();
         if CHECKER
-            .set(Checker {
-                group: group.clone(),
-                cache: cache.clone(),
-                requests: send,
-            })
+            .set(Checker { group: group.clone(), cache: cache.clone(), requests: send })
             .is_err()
         {
             return;
@@ -234,12 +228,7 @@ pub fn learn(word: &str) {
 /// on the screen when the writer says they never want to see it.
 pub fn mute(name: &str) {
     let Some(checker) = CHECKER.get() else { return };
-    checker
-        .group
-        .lock()
-        .unwrap()
-        .config
-        .set_rule_enabled(name, false);
+    checker.group.lock().unwrap().config.set_rule_enabled(name, false);
     start_over();
 }
 
@@ -287,8 +276,7 @@ fn left_alone(text: &str) -> Vec<Range<usize>> {
         .filter(|(event, _)| {
             matches!(
                 event,
-                Event::Code(_)
-                    | Event::Start(Tag::CodeBlock(_) | Tag::Link { .. } | Tag::Table(_))
+                Event::Code(_) | Event::Start(Tag::CodeBlock(_) | Tag::Link { .. } | Tag::Table(_))
             )
         })
         .map(|(_, bytes)| char_at(text, bytes.start)..char_at(text, bytes.end))
@@ -450,10 +438,7 @@ mod tests {
         assert_eq!(covers("Call `recieve_this` now."), Vec::<String>::new());
         assert_eq!(covers("Read\n\n```\nrecieve\n```\n"), Vec::<String>::new());
         assert_eq!(covers("See [the exampel](http://a.test/pge)."), Vec::<String>::new());
-        assert_eq!(
-            covers("| Naem |\n| --- |\n| tpyo |\n"),
-            Vec::<String>::new()
-        );
+        assert_eq!(covers("| Naem |\n| --- |\n| tpyo |\n"), Vec::<String>::new());
         assert_eq!(covers("Mail me@exampel.com or see exampel.com now."), Vec::<String>::new());
         assert_eq!(covers("The snake_case_naem and the h1 and utf8."), Vec::<String>::new());
         assert_eq!(covers("Read ~/notes/thnig now."), Vec::<String>::new());
@@ -514,10 +499,7 @@ mod tests {
         };
         let objected = run(&group(Checks::new()), heading);
         assert_eq!(
-            objected
-                .iter()
-                .map(|lint| lint.rule.as_str())
-                .collect::<Vec<_>>(),
+            objected.iter().map(|lint| lint.rule.as_str()).collect::<Vec<_>>(),
             ["UseTitleCase"]
         );
 
@@ -530,10 +512,8 @@ mod tests {
     #[test]
     fn runs_the_rules_the_writer_asked_for() {
         let mut config = FlatConfig::new_curated();
-        let asked = Checks::from([
-            ("UseTitleCase".to_string(), false),
-            ("SpellCheck".to_string(), true),
-        ]);
+        let asked =
+            Checks::from([("UseTitleCase".to_string(), false), ("SpellCheck".to_string(), true)]);
         configure(&mut config, &asked);
         assert!(!config.is_rule_enabled("UseTitleCase"));
         assert!(!config.is_rule_enabled("SpellCheck"));
@@ -551,16 +531,8 @@ mod tests {
         assert!(has_rule("UseTitleCase"));
         assert!(!has_rule("UseTitleCse"));
         let listed = rules();
-        assert!(
-            listed.iter().any(|(name, _)| name == "UseTitleCase"),
-            "{}",
-            listed.len()
-        );
-        assert!(
-            listed
-                .iter()
-                .all(|(_, description)| !description.is_empty())
-        );
+        assert!(listed.iter().any(|(name, _)| name == "UseTitleCase"), "{}", listed.len());
+        assert!(listed.iter().all(|(_, description)| !description.is_empty()));
 
         let built = FlatConfig::new_curated();
         for (name, _) in &listed {
