@@ -160,6 +160,7 @@ fn asked_about(bytes: &[u8]) -> Vec<&'static str> {
         (wrote("\x1b[16t") || wrote("\x1b[14t")).then_some("asks about cell size"),
         wrote("\x1b[?1049h").then_some("takes the screen"),
         wrote("\x1b[?2004h").then_some("turns paste on"),
+        wrote("\x1b]11;").then_some("colours terminal padding"),
     ]
     .into_iter()
     .flatten()

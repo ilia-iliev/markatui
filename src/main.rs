@@ -8,6 +8,7 @@ const HELP: &str = "Usage:
   markatui -checks
   markatui -checks on|off <check>
   markatui theme light|dark|terminal
+  markatui footer band|invert|paper
   markatui -config
 
 Available options:
@@ -15,6 +16,7 @@ Available options:
   -keymap     List the keys, or bind one to a command
   -checks     List the writing checks, or turn one on or off
   -theme      Set light, dark, or terminal colours
+  -footer     Set how the foot of the screen is coloured
   -config     Edit the config file";
 
 fn main() {
@@ -30,6 +32,8 @@ fn main() {
         first = path;
     } else if first == "theme" {
         return report(theme(arguments));
+    } else if first == "footer" {
+        return report(footer(arguments));
     } else if let Some(flag) = flag(&first) {
         match flag {
             "h" | "help" => {
@@ -39,6 +43,7 @@ fn main() {
             "checks" => return report(checks(arguments)),
             "keymap" => return report(keymap(arguments)),
             "theme" => return report(theme(arguments)),
+            "footer" => return report(footer(arguments)),
             "config" => return config(arguments),
             _ => invalid_option(&first),
         }
@@ -81,6 +86,13 @@ fn config(mut arguments: impl Iterator<Item = String>) {
 fn theme(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
     match (arguments.next(), arguments.next()) {
         (Some(name), None) => tui::config::set_theme(&name),
+        _ => usage(),
+    }
+}
+
+fn footer(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
+    match (arguments.next(), arguments.next()) {
+        (Some(name), None) => tui::config::set_footer(&name),
         _ => usage(),
     }
 }

@@ -29,12 +29,21 @@ markatui theme dark
 markatui theme terminal  # inherit the terminal's background and text colour
 ```
 
+The foot of the screen — the checker's message, the search bar, the quit prompt — is coloured separately:
+
+```sh
+markatui footer band     # a band of its own, in the palette's prompt colours
+markatui footer invert   # the page's own colours, swapped
+markatui footer paper    # no band: the page's colours as they are
+```
+
 The choice is written to the config file. `markatui -config` opens that file in the editor; what it says is read at the next start. The default is:
 
 ```toml
 # How wide the column of text is, in cells. 20 to 500.
 content_width = 72
 theme = "terminal"
+footer = "band"
 
 [palette]
 accent = "#C2622F"      # headings
@@ -43,7 +52,7 @@ muted = "#8A8378"       # markers, bullets, rules, box drawing
 lint = "#F3E4C3"        # the wash under something the checker objects to
 lint_ink = "#2D2A26"
 code = "#3A3733"        # the ground a fenced block sits on
-prompt = "#26241F"      # the band at the foot of the screen
+prompt = "#26241F"      # the band at the foot of the screen, with footer = "band"
 prompt_ink = "#FFFFFF"
 paper = "#FAF6EC"       # used by the light and dark themes
 ink = "#2D2A26"

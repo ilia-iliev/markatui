@@ -1,6 +1,7 @@
 //! The colours, and how a cell's style bits turn into one. Light and dark paint the
 //! whole screen; terminal leaves its ground and ink alone. Every preset can be adjusted
-//! in the config file's `[palette]` table.
+//! in the config file's `[palette]` table, and the foot of the screen has [`Footer`]
+//! modes of its own.
 
 use crate::layout::Cell;
 use crate::style;
@@ -57,7 +58,8 @@ palette! {
     lint_ink = 0x2D2A26;
     /// The ground a fenced block sits on, a shade off the terminal's own either way.
     code = 0x3A3733;
-    /// The foot of the screen: the checker's message, the search bar, the quit prompt.
+    /// The band at the foot of the screen: the checker's message, the search bar, the
+    /// quit prompt. Painted only where the footer is drawn as a band of its own.
     prompt = 0x26241F;
     prompt_ink = 0xFFFFFF;
     /// The ground and the ink of the whole screen, painted only where the config has
@@ -104,8 +106,8 @@ impl Theme {
                     lint: hex(0xF7D8A8),
                     lint_ink: hex(0x26231F),
                     code: hex(0xE9E6DE),
-                    prompt: hex(0x2B2822),
-                    prompt_ink: hex(0xF7F3EA),
+                    prompt: hex(0xE4DFD3),
+                    prompt_ink: hex(0x26231F),
                     paper: hex(0xFCFAF5),
                     ink: hex(0x26231F),
                 },
@@ -130,6 +132,39 @@ impl Theme {
     }
 }
 
+/// How the foot of the screen is coloured. A band is a plate of its own in the palette's
+/// `prompt` colours; the other two take the page's own ground and ink, either way round,
+/// which is the only thing that stays right whatever the terminal is painted in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Footer {
+    #[default]
+    Band,
+    Invert,
+    Paper,
+}
+
+impl Footer {
+    /// The modes, in the words the config file and the error message use.
+    pub const CHOICES: &'static str = "band, invert, or paper";
+
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "band" => Some(Self::Band),
+            "invert" => Some(Self::Invert),
+            "paper" => Some(Self::Paper),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Band => "band",
+            Self::Invert => "invert",
+            Self::Paper => "paper",
+        }
+    }
+}
+
 /// How wide the column of text is, in cells. Wider than this and a line of prose is
 /// tiring to read back; the Qt front end held the same measure in pixels.
 pub fn content_width() -> u16 {
@@ -144,6 +179,13 @@ pub(crate) fn content_width_for(config: &config::Config) -> u16 {
 /// ground, unless the config asked for paper of ours.
 pub fn base() -> Style {
     base_for(config::get())
+}
+
+/// The page colour the terminal itself should wear while an explicit theme is open.
+/// This reaches pixels outside its cell grid, which drawing the frame cannot.
+pub fn terminal_background() -> Option<Color> {
+    let config = config::get();
+    (!config.inherit_background).then_some(config.palette.paper)
 }
 
 pub(crate) fn base_for(config: &config::Config) -> Style {
@@ -210,5 +252,11 @@ pub fn prompt() -> Style {
 }
 
 pub(crate) fn prompt_for(config: &config::Config) -> Style {
-    Style::default().bg(config.palette.prompt).fg(config.palette.prompt_ink)
+    match config.footer {
+        Footer::Band => Style::default().bg(config.palette.prompt).fg(config.palette.prompt_ink),
+        // Swapping what the page is already painted in is the one plate that cannot come
+        // out wrong: it is the terminal's own two colours where those are what is showing.
+        Footer::Invert => base_for(config).add_modifier(Modifier::REVERSED),
+        Footer::Paper => base_for(config),
+    }
 }

@@ -3,6 +3,7 @@
 //! ```toml
 //! content_width = 72
 //! theme = "terminal"
+//! footer = "band"
 //!
 //! [palette]
 //! accent = "#C2622F"
@@ -28,7 +29,7 @@ use crate::lint;
 use crate::storage;
 use crate::tui::keys::Keymap;
 
-use crate::tui::theme::{Palette, Theme};
+use crate::tui::theme::{Footer, Palette, Theme};
 use ratatui::style::Color;
 use std::fs;
 use std::io;
@@ -46,6 +47,9 @@ pub struct Config {
     /// Kept separately for compatibility with older config files.
     pub inherit_background: bool,
     pub palette: Palette,
+    /// How the foot of the screen is coloured, which is a choice of its own: a band the
+    /// palette paints, or the page's own two colours one way round or the other.
+    pub footer: Footer,
     pub keys: Keymap,
     /// The checker's rules the writer has spoken for, on or off. What is not named here
     /// stays as the checker ships it.
@@ -59,6 +63,7 @@ impl Default for Config {
             content_width: 72,
             inherit_background,
             palette,
+            footer: Footer::default(),
             keys: Keymap::default(),
             checks: lint::Checks::new(),
         }
@@ -88,18 +93,36 @@ pub fn set_theme(name: &str) -> Result<(), String> {
     let theme = Theme::parse(name).ok_or_else(|| {
         format!("there is no theme called {name:?}; choose light, dark, or terminal")
     })?;
+    // This older setting would otherwise undo a selected preset later in the file.
+    rewrite(|text| setting_in(text, "theme", theme.name(), &["inherit_background"]))
+}
+
+/// Choose how the foot of the screen is coloured for future runs.
+pub fn set_footer(name: &str) -> Result<(), String> {
+    let footer = Footer::parse(name)
+        .ok_or_else(|| format!("there is no footer called {name:?}; choose {}", Footer::CHOICES))?;
+    rewrite(|text| setting_in(text, "footer", footer.name(), &[]))
+}
+
+/// Read the config file, put `change` through it, and write it back. A config that is
+/// not there yet is an empty one: the settings it does not name are the defaults.
+fn rewrite(change: impl FnOnce(&str) -> String) -> Result<(), String> {
     let path = path()?;
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(format!("{}: {error}", path.display())),
     };
-    storage::write_atomic(&path, theme_in(&text, theme).as_bytes())
+    storage::write_atomic(&path, change(&text).as_bytes())
         .map_err(|error| format!("{}: {error}", path.display()))
 }
 
-fn theme_in(text: &str, theme: Theme) -> String {
-    let setting = format!("theme = \"{}\"", theme.name());
+/// One root setting written into the config: the line already setting it is the line
+/// changed, and where there is none the setting goes in at the top. The keys in `stale`
+/// are dropped, being settings the new one would otherwise be fighting with further
+/// down the file.
+fn setting_in(text: &str, key: &str, value: &str, stale: &[&str]) -> String {
+    let setting = format!("{key} = \"{value}\"");
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let mut in_root = true;
     let mut found = false;
@@ -111,8 +134,8 @@ fn theme_in(text: &str, theme: Theme) -> String {
         if !in_root {
             return true;
         }
-        let key = trimmed.split('=').next().map(str::trim);
-        if key == Some("theme") {
+        let named = trimmed.split('=').next().map(str::trim).unwrap_or_default();
+        if named == key {
             if !found {
                 *line = setting.clone();
                 found = true;
@@ -120,8 +143,7 @@ fn theme_in(text: &str, theme: Theme) -> String {
             }
             return false;
         }
-        // This older setting would otherwise undo a selected preset later in the file.
-        key != Some("inherit_background")
+        !stale.contains(&named)
     });
     if !found {
         lines.insert(0, setting);
@@ -182,6 +204,7 @@ fn set(config: &mut Config, table: &str, key: &str, value: &str) -> Result<(), S
         "" => match key {
             "content_width" => config.content_width = width(value)?,
             "theme" => config.apply(theme(value)?),
+            "footer" => config.footer = footer(value)?,
             // Kept for existing config files. A named theme is clearer for new ones.
             "inherit_background" => config.inherit_background = boolean(value)?,
             _ => return Err(unknown(key)),
@@ -214,6 +237,12 @@ fn theme(value: &str) -> Result<Theme, String> {
     let name = string(value)?;
     Theme::parse(name)
         .ok_or_else(|| format!("{name:?} is not a theme; choose light, dark, or terminal"))
+}
+
+fn footer(value: &str) -> Result<Footer, String> {
+    let name = string(value)?;
+    Footer::parse(name)
+        .ok_or_else(|| format!("{name:?} is not a footer; choose {}", Footer::CHOICES))
 }
 
 fn boolean(value: &str) -> Result<bool, String> {
@@ -344,11 +373,59 @@ mod tests {
     fn writes_a_theme_at_the_root_and_removes_the_old_background_switch() {
         let text =
             "content_width = 80\ninherit_background = true\n\n[palette]\naccent = \"#010203\"\n";
+        let stale = &["inherit_background"];
         assert_eq!(
-            theme_in(text, Theme::Dark),
+            setting_in(text, "theme", "dark", stale),
             "theme = \"dark\"\ncontent_width = 80\n\n[palette]\naccent = \"#010203\"\n"
         );
-        assert_eq!(theme_in("theme = \"light\"\n", Theme::Terminal), "theme = \"terminal\"\n");
+        assert_eq!(
+            setting_in("theme = \"light\"\n", "theme", "terminal", stale),
+            "theme = \"terminal\"\n"
+        );
+    }
+
+    /// The foot of the screen is settled apart from the preset, so writing one leaves
+    /// the other where the writer put it.
+    #[test]
+    fn writes_a_footer_beside_the_theme() {
+        let text = "theme = \"light\"\nfooter = \"band\"\n";
+        assert_eq!(
+            setting_in(text, "footer", "paper", &[]),
+            "theme = \"light\"\nfooter = \"paper\"\n"
+        );
+        assert_eq!(setting_in("", "footer", "invert", &[]), "footer = \"invert\"\n");
+    }
+
+    /// Band is the palette's own plate; the other two are the page's two colours, one
+    /// way round or the other, so that a light preset does not carry a black bar.
+    #[test]
+    fn the_footer_is_coloured_the_way_the_config_asks() {
+        use crate::tui::theme;
+        use ratatui::style::Modifier;
+
+        let band = read_well("theme = \"light\"\nfooter = \"band\"\n");
+        assert_eq!(theme::prompt_for(&band).bg, Some(band.palette.prompt));
+        assert_eq!(theme::prompt_for(&band).fg, Some(band.palette.prompt_ink));
+
+        let paper = read_well("theme = \"light\"\nfooter = \"paper\"\n");
+        assert_eq!(theme::prompt_for(&paper), theme::base_for(&paper));
+
+        let inverted = read_well("theme = \"light\"\nfooter = \"invert\"\n");
+        assert!(theme::prompt_for(&inverted).add_modifier.contains(Modifier::REVERSED));
+        assert_eq!(theme::prompt_for(&inverted).bg, Some(inverted.palette.paper));
+
+        // Nothing is painted under an inverted footer on the terminal preset either: the
+        // swap is the terminal's own two colours.
+        let terminal = read_well("theme = \"terminal\"\nfooter = \"invert\"\n");
+        assert_eq!(theme::prompt_for(&terminal).bg, None);
+        assert_eq!(read_well("").footer, Footer::Band);
+    }
+
+    #[test]
+    fn refuses_a_footer_it_has_no_colours_for() {
+        let (_, problems) = read("footer = \"neon\"\n");
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains(Footer::CHOICES), "{:?}", problems[0]);
     }
 
     #[test]

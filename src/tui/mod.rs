@@ -98,14 +98,15 @@ pub fn run(path: &Path) -> io::Result<()> {
     // it up rather than after.
     lint::preload(&config::get().checks);
     let capabilities = probe::ask();
-    let mut terminal = terminal::start(capabilities)?;
+    let background = theme::terminal_background();
+    let mut terminal = terminal::start(capabilities, background)?;
     // The picker is asked for once the screen is ours: the terminal answers the question
     // by writing to it, and this way it is our screen that gets written on.
     let mut app = App::open(path, Gallery::new(probe::pictures(), path));
     app.notice = notice;
 
     let result = app.loop_until_quit(&mut terminal);
-    terminal::stop(capabilities)?;
+    terminal::stop(capabilities, background)?;
     result
 }
 
@@ -604,9 +605,12 @@ mod tests {
 
         assert!(app.footer(40).is_empty(), "the checker has said nothing yet");
         app.act(Action::ToggleGrammar);
-        assert_eq!(app.footer(40), vec!["grammar off".to_string()]);
+        assert_eq!(app.footer(40), vec!["GRAMMAR OFF".to_string()]);
+        let mut terminal = Terminal::new(TestBackend::new(90, 5)).expect("a test screen");
+        assert!(frame(&mut app, &mut terminal)[4].starts_with("GRAMMAR OFF"));
+
         app.act(Action::ToggleReading);
-        assert_eq!(app.footer(40), vec!["reading".to_string()]);
+        assert_eq!(app.footer(40), vec!["READING".to_string()]);
         forget(&path);
     }
 
@@ -642,6 +646,7 @@ mod tests {
 
         let rows = frame(&mut app, &mut terminal);
 
+        assert!(rows.iter().any(|row| row.starts_with("FIND")), "{rows:#?}");
         assert!(rows.iter().any(|row| row.contains("no matches")), "{rows:#?}");
         assert!(app.viewport <= 7, "only one row was given to the search");
         forget(&path);

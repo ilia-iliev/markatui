@@ -37,10 +37,10 @@ impl App {
             return vec![error.clone()];
         }
         if self.reading {
-            return vec!["reading".to_string()];
+            return vec!["READING".to_string()];
         }
         if !self.grammar {
-            return vec!["grammar off".to_string()];
+            return vec!["GRAMMAR OFF".to_string()];
         }
         self.lint_line().into_iter().collect()
     }
@@ -58,7 +58,7 @@ impl App {
                 None => "no matches".into(),
             },
         };
-        let typed = format!("find {}", search.needle);
+        let typed = format!("FIND {}", search.needle);
         let room = (theme::content_width().min(width) as usize)
             .saturating_sub(typed.chars().count() + counter.chars().count());
         format!("{typed}{}{counter}", " ".repeat(room.max(2)))

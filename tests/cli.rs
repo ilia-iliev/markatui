@@ -51,6 +51,35 @@ fn theme_command_writes_the_selected_preset_to_config() {
     std::fs::remove_dir_all(config).expect("the temporary config goes");
 }
 
+/// The foot of the screen is set the same way, and the two settings sit side by side in
+/// the config rather than one replacing the other.
+#[test]
+fn footer_command_writes_the_chosen_mode_beside_the_theme() {
+    let config = std::env::temp_dir().join(format!("markatui-footer-{}", std::process::id()));
+    let run = |arguments: [&str; 2]| {
+        Command::new(env!("CARGO_BIN_EXE_markatui"))
+            .args(arguments)
+            .env("XDG_CONFIG_HOME", &config)
+            .output()
+            .expect("markatui runs")
+    };
+
+    assert!(run(["theme", "light"]).status.success());
+    let output = run(["footer", "paper"]);
+    assert!(output.status.success(), "{output:?}");
+
+    let written = std::fs::read_to_string(config.join("markatui/config.toml")).expect("a config");
+    assert_eq!(written, "footer = \"paper\"\ntheme = \"light\"\n");
+
+    let output = run(["footer", "neon"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("band, invert, or paper"),
+        "{output:?}"
+    );
+    std::fs::remove_dir_all(config).expect("the temporary config goes");
+}
+
 #[test]
 fn theme_flag_rejects_an_unknown_preset() {
     let output = Command::new(env!("CARGO_BIN_EXE_markatui"))

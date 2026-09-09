@@ -303,21 +303,21 @@ impl Selection {
     }
 }
 
-/// How many rows a footer message occupies when wrapped inside the document column.
+/// How many rows a footer message occupies in its left-aligned column.
 pub fn footer_height(area: Rect, text: &str) -> u16 {
     Paragraph::new(text)
         .wrap(Wrap { trim: false })
-        .line_count(column(area).width)
+        .line_count(footer_column(area).width)
         .try_into()
         .unwrap_or(u16::MAX)
         .max(1)
 }
 
 /// The foot of the screen: the checker's message, or the search bar, or the quit prompt.
-/// A band right across, with the words in the same column as the text above them.
+/// A band right across, with the words against its left edge.
 pub fn footer(frame: &mut Frame, area: Rect, text: &str) {
     let style = theme::prompt();
-    let column = column(area);
+    let column = footer_column(area);
     let buffer = frame.buffer_mut();
     for y in area.y..area.y + area.height {
         for x in area.x..area.x + area.width {
@@ -329,4 +329,8 @@ pub fn footer(frame: &mut Frame, area: Rect, text: &str) {
             .wrap(Wrap { trim: false }),
         column,
     );
+}
+
+fn footer_column(area: Rect) -> Rect {
+    Rect { width: theme::content_width().min(area.width), ..area }
 }
