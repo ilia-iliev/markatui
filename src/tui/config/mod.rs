@@ -5,7 +5,7 @@
 //! theme = "terminal"
 //!
 //! [palette]
-//! accent = "#3E8E62"
+//! accent = "#C2622F"
 //!
 //! [checks]
 //! UseTitleCase = false
@@ -162,10 +162,7 @@ fn read(text: &str) -> (Config, Vec<String>) {
     let mut config = Config::default();
     let mut table = String::new();
     let problems = lines::walk(storage::CONFIG_FILE, text, |line| {
-        if let Some(name) = line
-            .strip_prefix('[')
-            .and_then(|rest| rest.strip_suffix(']'))
-        {
+        if let Some(name) = line.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
             table = name.trim().to_string();
             if !matches!(table.as_str(), "palette" | "checks") {
                 return Err(format!("there is no [{table}] to put anything in"));
@@ -228,16 +225,10 @@ fn boolean(value: &str) -> Result<bool, String> {
 }
 
 fn width(value: &str) -> Result<u16, String> {
-    let width: u16 = value
-        .parse()
-        .map_err(|_| format!("{value} is not a number"))?;
+    let width: u16 = value.parse().map_err(|_| format!("{value} is not a number"))?;
     match WIDTHS.contains(&width) {
         true => Ok(width),
-        false => Err(format!(
-            "{width} columns is outside {}–{}",
-            WIDTHS.start(),
-            WIDTHS.end()
-        )),
+        false => Err(format!("{width} columns is outside {}–{}", WIDTHS.start(), WIDTHS.end())),
     }
 }
 
@@ -287,6 +278,7 @@ mod tests {
 
             [palette]
             accent = "#010101"
+            link = "#0A0A0A"
             muted = "#020202"
             lint = "#030303"
             lint_ink = "#040404"
@@ -298,12 +290,7 @@ mod tests {
             "##,
         );
         let colour = |channel| Color::Rgb(channel, channel, channel);
-        let cell = |bits| Cell {
-            text: "x".to_string(),
-            width: 1,
-            bits,
-            source: Some(0),
-        };
+        let cell = |bits| Cell { text: "x".to_string(), width: 1, bits, source: Some(0) };
 
         assert_eq!(theme::content_width_for(&config), 100);
         assert_eq!(
@@ -316,29 +303,20 @@ mod tests {
         assert_eq!(base.fg, Some(colour(9)));
         let mut inherited = config.clone();
         inherited.inherit_background = true;
-        assert_eq!(
-            theme::base_for(&inherited),
-            ratatui::style::Style::default()
-        );
+        assert_eq!(theme::base_for(&inherited), ratatui::style::Style::default());
 
         let heading = theme::of_for(&config, &cell(style::HEADING), 0);
         assert_eq!(heading.fg, Some(colour(1)));
         assert!(heading.add_modifier.contains(Modifier::BOLD));
         let link = theme::of_for(&config, &cell(style::LINK), 0);
-        assert_eq!(link.fg, Some(colour(1)));
+        assert_eq!(link.fg, Some(colour(10)));
         assert!(link.add_modifier.contains(Modifier::UNDERLINED));
-        assert_eq!(
-            theme::of_for(&config, &cell(style::MARKER), 0).fg,
-            Some(colour(2))
-        );
+        assert_eq!(theme::of_for(&config, &cell(style::MARKER), 0).fg, Some(colour(2)));
 
         let lint = theme::of_for(&config, &cell(style::LINT), 0);
         assert_eq!(lint.bg, Some(colour(3)));
         assert_eq!(lint.fg, Some(colour(4)));
-        assert_eq!(
-            theme::of_for(&config, &cell(0), style::CODE).bg,
-            Some(colour(5))
-        );
+        assert_eq!(theme::of_for(&config, &cell(0), style::CODE).bg, Some(colour(5)));
 
         let prompt = theme::prompt_for(&config);
         assert_eq!(prompt.bg, Some(colour(6)));
@@ -370,10 +348,7 @@ mod tests {
             theme_in(text, Theme::Dark),
             "theme = \"dark\"\ncontent_width = 80\n\n[palette]\naccent = \"#010203\"\n"
         );
-        assert_eq!(
-            theme_in("theme = \"light\"\n", Theme::Terminal),
-            "theme = \"terminal\"\n"
-        );
+        assert_eq!(theme_in("theme = \"light\"\n", Theme::Terminal), "theme = \"terminal\"\n");
     }
 
     #[test]
@@ -397,11 +372,7 @@ mod tests {
         );
         assert_eq!(problems.len(), 3, "{problems:?}");
         assert!(problems[0].contains("line 2"), "{:?}", problems[0]);
-        assert!(
-            problems[1].contains("inherit_backgrund"),
-            "{:?}",
-            problems[1]
-        );
+        assert!(problems[1].contains("inherit_backgrund"), "{:?}", problems[1]);
         assert!(problems[2].contains("[colours]"), "{:?}", problems[2]);
         // The line after the ones it could not read is read all the same.
         assert_eq!(config.palette.muted, Color::Rgb(0, 0, 0));

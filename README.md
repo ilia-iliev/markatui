@@ -37,7 +37,8 @@ content_width = 72
 theme = "terminal"
 
 [palette]
-accent = "#3E8E62"      # headings and links
+accent = "#C2622F"      # headings
+link = "#5578B8"        # links
 muted = "#8A8378"       # markers, bullets, rules, box drawing
 lint = "#F3E4C3"        # the wash under something the checker objects to
 lint_ink = "#2D2A26"

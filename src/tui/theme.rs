@@ -11,9 +11,9 @@ use ratatui::style::{Color, Modifier, Style};
 /// `[palette]` table calls it by all come off the same line, so that adding a colour is
 /// the single edit this file has always claimed it was.
 macro_rules! palette {
-    ($($(#[$note:meta])* $name:ident = $red:literal, $green:literal, $blue:literal;)*) => {
+    ($($(#[$note:meta])* $name:ident = $hex:literal;)*) => {
         /// The colours the editor paints with. The names are the ones the config's
-        /// `[palette]` table uses, and the defaults are the theme the Qt front end had.
+        /// `[palette]` table uses, and the defaults are the `terminal` preset.
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         pub struct Palette {
             $($(#[$note])* pub $name: Color,)*
@@ -21,15 +21,11 @@ macro_rules! palette {
 
         impl Default for Palette {
             fn default() -> Self {
-                Palette { $($name: Color::Rgb($red, $green, $blue),)* }
+                Palette { $($name: hex($hex),)* }
             }
         }
 
         impl Palette {
-            const fn rgb($($name: (u8, u8, u8),)*) -> Self {
-                Palette { $($name: Color::Rgb($name.0, $name.1, $name.2),)* }
-            }
-
             /// The colour the config calls `name`.
             pub fn slot(&mut self, name: &str) -> Option<&mut Color> {
                 Some(match name {
@@ -41,24 +37,33 @@ macro_rules! palette {
     };
 }
 
+/// A colour written the way the config file and the README write it, `0xRRGGBB`.
+const fn hex(value: u32) -> Color {
+    Color::Rgb((value >> 16) as u8, (value >> 8) as u8, value as u8)
+}
+
 palette! {
-    /// The green of the Qt theme, which reads as ink on paper and as a highlight on black.
-    accent = 0x3E, 0x8E, 0x62;
+    /// Headings: a burnt orange out of the paper's own family, dark enough to read as ink
+    /// on a light ground and warm enough to lift off a dark one.
+    accent = 0xC2622F;
+    /// Links, which want the colour a reader already expects of them rather than the one
+    /// the headings wear.
+    link = 0x5578B8;
     /// Structure the writer is not reading: markers, bullets, rules, box drawing.
-    muted = 0x8A, 0x83, 0x78;
+    muted = 0x8A8378;
     /// Behind anything the checker took exception to, a misspelled word and a clumsy
     /// phrase alike: wheat, with the ink forced dark so the words stay legible on it.
-    lint = 0xF3, 0xE4, 0xC3;
-    lint_ink = 0x2D, 0x2A, 0x26;
+    lint = 0xF3E4C3;
+    lint_ink = 0x2D2A26;
     /// The ground a fenced block sits on, a shade off the terminal's own either way.
-    code = 0x3A, 0x37, 0x33;
+    code = 0x3A3733;
     /// The foot of the screen: the checker's message, the search bar, the quit prompt.
-    prompt = 0x26, 0x24, 0x1F;
-    prompt_ink = 0xFF, 0xFF, 0xFF;
+    prompt = 0x26241F;
+    prompt_ink = 0xFFFFFF;
     /// The ground and the ink of the whole screen, painted only where the config has
     /// asked for them with `inherit_background = false`.
-    paper = 0xFA, 0xF6, 0xEC;
-    ink = 0x2D, 0x2A, 0x26;
+    paper = 0xFAF6EC;
+    ink = 0x2D2A26;
 }
 
 /// A complete, sensible starting palette. `Terminal` keeps the user's terminal ground
@@ -92,31 +97,33 @@ impl Theme {
         match self {
             Self::Light => (
                 false,
-                Palette::rgb(
-                    (0x2F, 0x76, 0x50),
-                    (0x77, 0x6F, 0x65),
-                    (0xF3, 0xE4, 0xC3),
-                    (0x2D, 0x2A, 0x26),
-                    (0xEC, 0xE7, 0xDD),
-                    (0x26, 0x24, 0x1F),
-                    (0xFF, 0xFF, 0xFF),
-                    (0xFA, 0xF6, 0xEC),
-                    (0x2D, 0x2A, 0x26),
-                ),
+                Palette {
+                    accent: hex(0xA4522A),
+                    link: hex(0x2F4C7A),
+                    muted: hex(0x857B6E),
+                    lint: hex(0xF7D8A8),
+                    lint_ink: hex(0x26231F),
+                    code: hex(0xE9E6DE),
+                    prompt: hex(0x2B2822),
+                    prompt_ink: hex(0xF7F3EA),
+                    paper: hex(0xFCFAF5),
+                    ink: hex(0x26231F),
+                },
             ),
             Self::Dark => (
                 false,
-                Palette::rgb(
-                    (0x72, 0xC9, 0x97),
-                    (0x9B, 0x94, 0x8A),
-                    (0x6B, 0x4F, 0x1D),
-                    (0xFF, 0xF4, 0xD6),
-                    (0x2C, 0x29, 0x26),
-                    (0x18, 0x17, 0x15),
-                    (0xF5, 0xF1, 0xE8),
-                    (0x21, 0x1F, 0x1C),
-                    (0xE8, 0xE2, 0xD8),
-                ),
+                Palette {
+                    accent: hex(0xE08A5A),
+                    link: hex(0x8FAFE0),
+                    muted: hex(0x9B948A),
+                    lint: hex(0x6B4F1D),
+                    lint_ink: hex(0xFFF4D6),
+                    code: hex(0x2C2926),
+                    prompt: hex(0x181715),
+                    prompt_ink: hex(0xF5F1E8),
+                    paper: hex(0x211F1C),
+                    ink: hex(0xE8E2D8),
+                },
             ),
             Self::Terminal => (true, Palette::default()),
         }
@@ -142,9 +149,7 @@ pub fn base() -> Style {
 pub(crate) fn base_for(config: &config::Config) -> Style {
     match config.inherit_background {
         true => Style::default(),
-        false => Style::default()
-            .bg(config.palette.paper)
-            .fg(config.palette.ink),
+        false => Style::default().bg(config.palette.paper).fg(config.palette.ink),
     }
 }
 
@@ -173,7 +178,7 @@ fn bits_for(config: &config::Config, bits: u16) -> Style {
         style = style.fg(palette.muted);
     }
     if bits & style::LINK != 0 {
-        style = style.fg(palette.accent).add_modifier(Modifier::UNDERLINED);
+        style = style.fg(palette.link).add_modifier(Modifier::UNDERLINED);
     }
     if bits & style::CODE != 0 {
         style = style.bg(palette.code);
@@ -205,7 +210,5 @@ pub fn prompt() -> Style {
 }
 
 pub(crate) fn prompt_for(config: &config::Config) -> Style {
-    Style::default()
-        .bg(config.palette.prompt)
-        .fg(config.palette.prompt_ink)
+    Style::default().bg(config.palette.prompt).fg(config.palette.prompt_ink)
 }
