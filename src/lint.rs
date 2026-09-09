@@ -1,7 +1,7 @@
 use crate::parse;
 use crate::spell;
 use crate::text::char_at;
-use harper_core::linting::{FlatConfig, LintGroup, LintKind, Suggestion};
+use harper_core::linting::{FlatConfig, LintGroup, LintKind, StructuredConfig, Suggestion};
 use harper_core::spell::{FstDictionary, MutableDictionary};
 use harper_core::{Dialect, Document, TokenKind};
 use pulldown_cmark::{Event, Parser, Tag};
@@ -60,8 +60,20 @@ fn configure(config: &mut FlatConfig, checks: &Checks) {
 
 /// Whether the checker has a rule of this name, so that a config naming one it does not
 /// have is a line the editor complains about rather than a check quietly left on.
+///
+/// Asked while the writer is waiting for their document, so it is asked of the curated
+/// settings rather than of a [`LintGroup`]. The two hold the same names — a group takes
+/// its own config from these settings — but a group is every rule built, better than half
+/// a second of it, and the question here is only what the names are.
 pub fn has_rule(name: &str) -> bool {
-    FlatConfig::new_curated().has_rule(name)
+    static NAMES: OnceLock<FlatConfig> = OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            StructuredConfig::curated()
+                .to_flat_config()
+                .expect("the curated settings are a config")
+        })
+        .has_rule(name)
 }
 
 /// Every rule the writer could turn off, each with the one line harper says about what it
@@ -529,6 +541,11 @@ mod tests {
 
     /// The name in the writer's config is a name harper knows; one it does not know is
     /// what the config complains about rather than turning nothing off.
+    ///
+    /// Every rule the listing prints is one the config will take, and takes the same way
+    /// a built group would. The two are asked of different things — [`has_rule`] reads
+    /// the curated settings, because building a group in front of a waiting writer costs
+    /// them better than half a second — and nothing but this says they agree.
     #[test]
     fn knows_the_rules_it_lets_a_writer_name() {
         assert!(has_rule("UseTitleCase"));
@@ -544,6 +561,12 @@ mod tests {
                 .iter()
                 .all(|(_, description)| !description.is_empty())
         );
+
+        let built = FlatConfig::new_curated();
+        for (name, _) in &listed {
+            assert!(has_rule(name), "the config would refuse {name}");
+            assert_eq!(built.has_rule(name), has_rule(name), "{name}");
+        }
     }
 
     #[test]
