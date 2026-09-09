@@ -21,6 +21,11 @@ ratatui-image = { version = "11", default-features = false, features = ["crosste
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 
+[dev-dependencies]
+# The startup measurement opens a pseudo-terminal, which is the one thing the standard
+# library has no way to do. Nothing the editor itself ships with needs it.
+libc = "0.2"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

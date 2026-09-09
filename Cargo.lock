@@ -3180,6 +3180,7 @@ dependencies = [
  "crossterm",
  "harper-core",
  "image",
+ "libc",
  "pulldown-cmark",
  "ratatui",
  "ratatui-image",
