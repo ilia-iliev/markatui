@@ -254,3 +254,21 @@ fn takes_the_rows_a_late_picture_adds_off_the_scroll() {
     assert_eq!(shift, 11);
     std::fs::remove_dir_all(directory).expect("the temporary directory goes");
 }
+
+/// Enter opens a line under the one being written and the caret goes down onto it there
+/// and then, with nothing typed on it yet: it does not sit out past the last word as
+/// though a space had been typed, waiting for the next keystroke to carry it over.
+#[test]
+fn takes_the_caret_down_to_the_line_enter_opened() {
+    let path = std::env::temp_dir().join(format!("markatui-enter-{}.md", std::process::id()));
+    let mut editor = Editor::open(&path);
+    let mut document = view::Document::default();
+    editor.insert("one");
+    drawn(&editor, 40, 10, &mut document, &mut Gallery::blind());
+    let (row, column) = document.caret().expect("the caret is in the block being typed in");
+    assert_eq!(column, 3);
+
+    editor.enter();
+    drawn(&editor, 40, 10, &mut document, &mut Gallery::blind());
+    assert_eq!(document.caret(), Some((row + 1, 0)));
+}

@@ -6,11 +6,13 @@
 use super::{Cell, Row, Slot};
 
 /// Break `body` into rows no wider than `width`, at a space where there is one. The first
-/// row carries `lead`; the rest hang under it on `hanging`.
+/// row carries `lead`; the rest hang under it on `hanging`. `at` is where the body starts
+/// in the source, which is all a row with nothing in it has to go on.
 pub(super) fn wrap(
     lead: Vec<Cell>,
     hanging: Vec<Cell>,
     body: Vec<Cell>,
+    at: usize,
     width: u16,
     bits: u16,
 ) -> Vec<Row> {
@@ -23,7 +25,7 @@ pub(super) fn wrap(
         let fits = fitting(rest, room.max(1));
         cells.extend_from_slice(&rest[..fits]);
         rest = &rest[fits..];
-        rows.push(finish(cells, bits));
+        rows.push(finish(cells, bits, at));
         if rest.is_empty() {
             break;
         }
@@ -66,8 +68,9 @@ fn fitting(rest: &[Cell], room: u16) -> usize {
 }
 
 /// Close a row off: where the caret can stand on it, worked out from the cells that came
-/// from somewhere.
-fn finish(cells: Vec<Cell>, bits: u16) -> Row {
+/// from somewhere. A row with none of those is an empty line — the one Enter has just
+/// opened — and the caret stands on it at `at`, where the writer's next character will go.
+fn finish(cells: Vec<Cell>, bits: u16, at: usize) -> Row {
     let mut slots = Vec::new();
     let mut column = 0u16;
     let mut last = None;
@@ -79,9 +82,7 @@ fn finish(cells: Vec<Cell>, bits: u16) -> Row {
         column += cell.width;
     }
     // One place past the end of the row, so a cursor at the end of a line has a column.
-    if let Some(source) = last {
-        slots.push(Slot { column, source });
-    }
+    slots.push(Slot { column, source: last.unwrap_or(at) });
     Row { cells, bits, slots }
 }
 

@@ -50,7 +50,8 @@ pub struct Row {
     /// Bits the whole row carries, whatever its cells say: a code block's ground.
     pub bits: u16,
     /// Every column of this row the caret can stand at, in order, with the last standing
-    /// past the final character. A row of pure decoration has none.
+    /// past the final character. An empty line has that one place and nothing else. A row
+    /// drawn rather than written — a rule, a fence, a table — has none at all.
     pub slots: Vec<Slot>,
 }
 
@@ -157,7 +158,7 @@ fn row_for(
     }
 
     let body = content(line, &prefix, mask, lints);
-    wrap(lead, hanging, body, width, block_bits(kind))
+    wrap(lead, hanging, body, line.at + prefix.len, width, block_bits(kind))
 }
 
 /// Bits every row of a block carries: a fenced block is drawn on its own ground from top
@@ -431,6 +432,23 @@ mod tests {
         assert_eq!(drawn(&laid_out("one\ntwo", Some(3), 40)), ["one|", "two"]);
         assert_eq!(drawn(&laid_out("one\ntwo", Some(4), 40)), ["one", "|two"]);
         assert_eq!(drawn(&laid_out("one\ntwo", Some(7), 40)), ["one", "two|"]);
+    }
+
+    /// Enter opens a line under the one being typed, and the caret goes down to it there
+    /// and then — it does not wait out in the column past the words above until something
+    /// is typed on the new line.
+    #[test]
+    fn puts_the_caret_on_the_line_enter_has_just_opened() {
+        assert_eq!(drawn(&laid_out("one\n", Some(4), 40)), ["one", "|"]);
+        assert_eq!(laid_out("one\n", Some(4), 40).caret, Some((1, 0)));
+    }
+
+    /// And a line left blank between two that are written on can be stood on, which is
+    /// what walking down through a fenced block over one asks for.
+    #[test]
+    fn gives_a_blank_line_between_two_written_ones_a_place_to_stand() {
+        assert_eq!(drawn(&laid_out("one\n\ntwo", Some(4), 40)), ["one", "|", "two"]);
+        assert_eq!(laid_out("one\n\ntwo", Some(4), 40).rows[1].source_at(0), Some(4));
     }
 
     #[test]

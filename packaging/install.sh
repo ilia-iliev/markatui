@@ -28,8 +28,6 @@ if rustup target list --installed 2>/dev/null | grep -qx "$target"; then
     cargo build --release --target "$target"
     binary="target/$target/release/markatui"
 else
-    echo "markatui: $target is not installed, so this build needs the libc it was built"
-    echo "markatui: against. \`rustup target add $target\` for one that does not."
     cargo build --release
     binary="target/release/markatui"
 fi
