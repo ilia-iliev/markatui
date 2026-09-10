@@ -290,9 +290,10 @@ fn draws_a_picture_that_was_left_among_the_words() {
     forget(&path);
 }
 
-/// Enter opens a line under the one being written and the caret goes down onto it there
-/// and then, with nothing typed on it yet: it does not sit out past the last word as
-/// though a space had been typed, waiting for the next keystroke to carry it over.
+/// Enter opens the block under the one being written and the caret goes down into it
+/// there and then, with nothing typed in it yet: it does not sit out past the last word
+/// as though a space had been typed, waiting for the next keystroke to carry it over.
+/// Shift+Enter opens a line inside the block instead, one row down rather than two.
 #[test]
 fn takes_the_caret_down_to_the_line_enter_opened() {
     let path = std::env::temp_dir().join(format!("markatui-enter-{}.md", std::process::id()));
@@ -303,9 +304,15 @@ fn takes_the_caret_down_to_the_line_enter_opened() {
     let (row, column) = document.caret().expect("the caret is in the block being typed in");
     assert_eq!(column, 3);
 
-    editor.enter();
+    editor.line_break();
     drawn(&editor, 40, 10, &mut document, &mut Gallery::blind());
     assert_eq!(document.caret(), Some((row + 1, 0)));
+
+    // And the block below stands a blank row under the one it was opened from — the
+    // line break just made is what the block ends at, so it is taken back out.
+    editor.enter();
+    drawn(&editor, 40, 10, &mut document, &mut Gallery::blind());
+    assert_eq!(document.caret(), Some((row + 2, 0)));
 }
 
 /// A paragraph made into something else is drawn as that thing the moment the cursor

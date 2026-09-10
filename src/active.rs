@@ -179,6 +179,19 @@ impl Active {
         self.goal = None;
     }
 
+    /// Put the cursor at the end of the table row it is on, past the row of dashes where
+    /// that is what follows: the dashes belong to the heading above them, and a row opened
+    /// between the two would leave the table without the line that says how its columns
+    /// read.
+    pub fn to_row_end(&mut self) {
+        self.to_line_edge(1);
+        let (_, end) = self.line_bounds(self.cursor);
+        let (start, after) = self.line_bounds(end + 1);
+        if marks::divider(self.slice(start, after)) {
+            self.place(after);
+        }
+    }
+
     pub fn to_block_edge(&mut self, step: Step) {
         self.cursor = self.edge(step);
         self.goal = None;
@@ -268,9 +281,13 @@ impl Active {
 
     /// Where the block would break in two if the writer pressed Enter here: what is in
     /// front of the cursor and what is behind it, with the newline they typed a moment
-    /// ago taken out from between them.
+    /// ago taken out from between them. There is one to take out only where a first
+    /// Enter left it: a heading breaks on the press that ends it.
     pub fn split(&self) -> (String, String) {
-        let before = self.cursor.saturating_sub(1);
+        let before = match self.character_before() {
+            Some('\n') => self.cursor - 1,
+            _ => self.cursor,
+        };
         (self.slice(0, before).to_string(), self.slice(self.cursor, self.length()).to_string())
     }
 
@@ -368,13 +385,29 @@ impl Active {
     /// it off them where they all carry it already. A selection stays over the lines it
     /// was on, so the same key pressed twice puts the block back.
     pub fn mark_lines(&mut self, mark: Mark) {
+        self.rewrite_lines(|lines| marks::toggle(lines, mark));
+    }
+
+    /// Every line the cursor or the selection touches, one level of indent further in or
+    /// back out. `false` where there was no indent left to give back.
+    pub fn indent_lines(&mut self, step: Step) -> bool {
+        self.rewrite_lines(|lines| marks::indented(lines, step))
+    }
+
+    /// Every line the cursor or the selection touches, rewritten by `change`. What is
+    /// rewritten is the head of the line, so the cursor keeps its place among the words
+    /// and a selection stays over the lines it was on. `false` where nothing changed.
+    fn rewrite_lines(&mut self, change: impl Fn(&[&str]) -> Vec<String>) -> bool {
         let selected = self.selection().is_some();
         let (start, end) = self.touched_lines();
         let text = self.slice(start, end).to_string();
         let lines: Vec<&str> = text.split('\n').collect();
-        let marked = marks::toggle(&lines, mark);
+        let marked = change(&lines);
+        if marked == lines {
+            return false;
+        }
 
-        // The cursor keeps its place among the words: everything a mark changes is at the
+        // The cursor keeps its place among the words: everything that changes is at the
         // head of the line, so the line's own growth is what the cursor moves by.
         let (line_start, _) = self.line_bounds(self.cursor);
         let index = self.slice(start, line_start).matches('\n').count();
@@ -393,6 +426,7 @@ impl Active {
                 self.place(cursor);
             }
         }
+        true
     }
 
     /// The whole of every line the cursor or the selection touches. Marking a line is a
@@ -404,8 +438,22 @@ impl Active {
 
     /// The list item the cursor is standing in, if it is standing in one.
     pub fn item(&self) -> Option<marks::Item> {
+        marks::item(self.line())
+    }
+
+    /// The whole of the line the cursor is standing on.
+    pub fn line(&self) -> &str {
         let (start, end) = self.line_bounds(self.cursor);
-        marks::item(self.slice(start, end))
+        self.slice(start, end)
+    }
+
+    /// Move to the next cell of the table, or the one before it. `false` where there is
+    /// none that way, which leaves the cursor where the writer put it.
+    pub fn step_cell(&mut self, step: Step) -> bool {
+        let Some(at) = marks::cell_step(&self.text, self.cursor, step) else { return false };
+        self.anchor = None;
+        self.place(at);
+        true
     }
 
     /// End the list: the marker of the empty item the writer pressed Enter on comes off,

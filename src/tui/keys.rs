@@ -33,9 +33,13 @@ pub enum Action {
     SelectAll,
     Delete(Step),
     Enter,
-    /// Tab, which moves between the two halves of the search bar and types a tab
-    /// everywhere else.
-    Tab,
+    /// Shift+Enter: a line break inside the block, where Enter ends it. Only a terminal
+    /// answering the kitty protocol tells the two apart; on one that does not, the writer
+    /// gets the older rule, where a second Enter is what ends the block.
+    LineBreak,
+    /// Tab, which moves between the two halves of the search bar, and in the document
+    /// takes a list item in or out a level, walks a table's cells, or types a tab.
+    Tab(Step),
     Undo,
     Redo,
     Copy,
@@ -101,9 +105,9 @@ pub const COMMANDS: &[Command] = &[
     Command { section: "Edit", name: "copy_selection", default: "ctrl+c", action: Action::Copy },
     // One paste for whatever the clipboard holds, words or picture, so there is no
     // second key to remember and no key that does nothing when the wrong thing is on it.
-    // Ctrl+V is bound to it as well, below: the terminals that take that key for their
-    // own paste never pass it on, so there is nothing to lose by having it here.
-    Command { section: "Edit", name: "paste", default: "ctrl+p", action: Action::Paste },
+    // Ctrl+V is what a writer presses; a terminal that takes that key for its own paste
+    // never passes it on, and what it sends instead arrives as a paste event anyway.
+    Command { section: "Edit", name: "paste", default: "ctrl+v", action: Action::Paste },
     Command { section: "Find", name: "find", default: "ctrl+f", action: Action::OpenSearch },
     Command {
         section: "View",
@@ -499,10 +503,9 @@ pub fn editing(key: KeyEvent) -> Action {
         (KeyCode::Esc, false, _) => Action::Quit,
         (KeyCode::Char('d'), true, _) => Action::Quit,
 
-        // The key every writer reaches for to paste, alongside the one in the config. A
-        // terminal that takes it for its own paste never passes it on, and what it sends
-        // instead arrives as a paste event; there is nothing lost by answering it here.
-        (KeyCode::Char('v'), true, _) => Action::Paste,
+        // The key the config had this on before Ctrl+V became the default, kept so that
+        // the hands of anyone who learned it are not wrong.
+        (KeyCode::Char('p'), true, _) => Action::Paste,
 
         (KeyCode::Left, true, _) => Action::Move(Motion::Word(-1), shift),
         (KeyCode::Right, true, _) => Action::Move(Motion::Word(1), shift),
@@ -519,8 +522,10 @@ pub fn editing(key: KeyEvent) -> Action {
 
         (KeyCode::Backspace, false, _) => Action::Delete(-1),
         (KeyCode::Delete, false, _) => Action::Delete(1),
+        (KeyCode::Enter, false, true) => Action::LineBreak,
         (KeyCode::Enter, false, _) => Action::Enter,
-        (KeyCode::Tab, false, _) => Action::Tab,
+        (KeyCode::Tab, false, _) => Action::Tab(1),
+        (KeyCode::BackTab, _, _) => Action::Tab(-1),
         (KeyCode::Char(character), false, _) => Action::Type(character.to_string()),
         _ => Action::Nothing,
     }
@@ -544,7 +549,8 @@ pub fn searching(key: KeyEvent) -> Action {
         // Which is what Enter means in the half of the bar holding the word. In the
         // other half it is the swap being asked for, one occurrence at a time.
         (KeyCode::Enter, _) => Action::Enter,
-        (KeyCode::Tab, _) => Action::Tab,
+        (KeyCode::Tab, _) => Action::Tab(1),
+        (KeyCode::BackTab, _) => Action::Tab(-1),
         (KeyCode::Char('a'), true) => Action::ReplaceAll,
         (KeyCode::Up, true) => Action::CycleSearch(-1),
         (KeyCode::Down, true) => Action::CycleSearch(1),
@@ -688,6 +694,17 @@ mod tests {
         assert_eq!(editing(press(KeyCode::Down, KeyModifiers::SHIFT)), Action::Row(1, true));
     }
 
+    /// Enter ends the block and Shift+Enter breaks the line inside it, which only a
+    /// terminal answering the kitty protocol can tell apart. Tab and Shift+Tab are the
+    /// same key either way.
+    #[test]
+    fn tells_shift_enter_from_enter_and_shift_tab_from_tab() {
+        assert_eq!(editing(press(KeyCode::Enter, KeyModifiers::NONE)), Action::Enter);
+        assert_eq!(editing(press(KeyCode::Enter, KeyModifiers::SHIFT)), Action::LineBreak);
+        assert_eq!(editing(press(KeyCode::Tab, KeyModifiers::NONE)), Action::Tab(1));
+        assert_eq!(editing(press(KeyCode::BackTab, KeyModifiers::SHIFT)), Action::Tab(-1));
+    }
+
     #[test]
     fn gives_control_with_the_arrows_to_the_checker() {
         assert_eq!(control(KeyCode::Up), Action::CycleLint(-1));
@@ -719,9 +736,9 @@ mod tests {
     fn pastes_whatever_the_clipboard_holds_on_one_key() {
         assert_eq!(control(KeyCode::Char('c')), Action::Copy);
         assert_eq!(control(KeyCode::Char('x')), Action::Cut);
-        assert_eq!(control(KeyCode::Char('p')), Action::Paste);
-        // And the key a writer reaches for first, where the terminal passes it on.
+        // The key the default map has it on now, and the one it had before.
         assert_eq!(control(KeyCode::Char('v')), Action::Paste);
+        assert_eq!(control(KeyCode::Char('p')), Action::Paste);
     }
 
     #[test]
@@ -752,7 +769,7 @@ mod tests {
         // Enter and Tab belong to the two halves of the bar: what they do depends on
         // which of them the writer is typing into.
         assert_eq!(searching(press(KeyCode::Enter, KeyModifiers::NONE)), Action::Enter);
-        assert_eq!(searching(press(KeyCode::Tab, KeyModifiers::NONE)), Action::Tab);
+        assert_eq!(searching(press(KeyCode::Tab, KeyModifiers::NONE)), Action::Tab(1));
         assert_eq!(searching(press(KeyCode::Char('a'), KeyModifiers::CONTROL)), Action::ReplaceAll);
         assert_eq!(searching(press(KeyCode::Down, KeyModifiers::CONTROL)), Action::CycleSearch(1));
         // Undo belongs to the document, not to the word being typed into the bar.

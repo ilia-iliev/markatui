@@ -238,9 +238,15 @@ pub fn prefix(line: &str, kind: Kind, edge: bool) -> Prefix {
     }
 }
 
+/// Whether the line is a fence marker: the ``` or ~~~ that opens a code block, and the
+/// one that closes it again.
+pub fn fences(line: &str) -> bool {
+    let body = line.trim_start();
+    body.starts_with("```") || body.starts_with("~~~")
+}
+
 fn fence(line: &str, edge: bool) -> Prefix {
-    let opens = line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~");
-    if edge && opens {
+    if edge && fences(line) {
         Prefix { len: length(line), quote: 0, indent: 0, marker: Marker::Fence }
     } else {
         Prefix::empty()

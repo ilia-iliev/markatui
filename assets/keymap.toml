@@ -10,7 +10,7 @@ redo = "ctrl+y"
 select_all = "ctrl+a"
 cut_selection = "ctrl+x"
 copy_selection = "ctrl+c"
-paste = "ctrl+p"
+paste = "ctrl+v"
 
 # Find
 find = "ctrl+f"

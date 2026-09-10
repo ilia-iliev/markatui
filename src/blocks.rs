@@ -81,7 +81,8 @@ pub fn replacement(source: &str) -> (Vec<String>, Vec<String>) {
     blocks[0].insert_str(0, &gaps[0]);
     let last = blocks.len() - 1;
     blocks[last].push_str(&gaps[last + 1]);
-    let separators = gaps[1..last + 1].to_vec();
+    let mut separators = gaps[1..last + 1].to_vec();
+    open_paragraphs(&mut blocks, &mut separators);
     (blocks, separators)
 }
 
@@ -105,15 +106,70 @@ pub fn hoist_images(blocks: &mut Vec<String>, separators: &mut Vec<String>) -> b
     moved
 }
 
+/// Every blank line a writer left over and above the one that ends a paragraph opened
+/// back into the empty paragraph it was written as: the view stacks blocks with one row
+/// of air between them, so a run of blank lines left in a gap is a run the writer never
+/// sees again. The gap is only cut in more places, never rewritten — the document still
+/// says exactly what the file says.
+pub fn open_paragraphs(blocks: &mut Vec<String>, separators: &mut Vec<String>) {
+    // From the back, so that a separator becoming several leaves the ones still to be
+    // looked at where they were.
+    for index in (0..separators.len()).rev() {
+        let breaks = paragraph_breaks(&separators[index]);
+        if breaks.len() < 2 {
+            continue;
+        }
+        blocks.splice(index + 1..index + 1, vec![String::new(); breaks.len() - 1]);
+        separators.splice(index..index + 1, breaks);
+    }
+}
+
+/// The source between two blocks cut into one piece per paragraph break it holds — two
+/// newlines each, which is what an empty paragraph is written as. Whatever is left over,
+/// an odd newline or the spaces on a blank line, stays on the last piece, so that the
+/// pieces put back together are the gap they came from.
+fn paragraph_breaks(gap: &str) -> Vec<String> {
+    let wanted = gap.bytes().filter(|byte| *byte == b'\n').count() / 2;
+    let mut breaks = Vec::with_capacity(wanted);
+    let mut newlines = 0;
+    let mut start = 0;
+    for (at, byte) in gap.bytes().enumerate() {
+        if byte != b'\n' {
+            continue;
+        }
+        newlines += 1;
+        if newlines % 2 == 0 && breaks.len() + 1 < wanted {
+            breaks.push(gap[start..=at].to_string());
+            start = at + 1;
+        }
+    }
+    breaks.push(gap[start..].to_string());
+    breaks
+}
+
 /// The same over a whole document, whose gaps carry the source outside the blocks as well
-/// as the source between them. What is around the outside is left alone: it is what keeps
-/// a file that was only read coming back the way it was found.
+/// as the source between them.
 pub fn hoist_document(segments: &mut parse::Segments) -> bool {
+    between(segments, hoist_images)
+}
+
+/// The same over a whole document.
+pub fn open_paragraphs_document(segments: &mut parse::Segments) {
+    between(segments, open_paragraphs);
+}
+
+/// A pass over a document's blocks and the separators between them. What is around the
+/// outside is left alone: it is what keeps a file that was only read coming back the way
+/// it was found.
+fn between<T>(
+    segments: &mut parse::Segments,
+    pass: impl FnOnce(&mut Vec<String>, &mut Vec<String>) -> T,
+) -> T {
     let last = segments.gaps.len() - 1;
     let mut separators: Vec<String> = segments.gaps.drain(1..last).collect();
-    let moved = hoist_images(&mut segments.blocks, &mut separators);
+    let outcome = pass(&mut segments.blocks, &mut separators);
     segments.gaps.splice(1..1, separators);
-    moved
+    outcome
 }
 
 /// The document as it would be written out: the blocks with their gaps back between them.
@@ -248,6 +304,58 @@ mod tests {
         assert!(hoist_document(&mut segments));
         assert_eq!(segments.blocks, ["words", "![a](1.png)", "plain"]);
         assert_eq!(segments.gaps, ["\n\n", "\n\n", "\n\n", "\n"]);
+    }
+
+    /// A blank line the writer left over and above the one that ends a paragraph is a
+    /// paragraph with nothing in it, which is what they typed to get it and what they
+    /// see once it is back.
+    #[test]
+    fn opens_the_blank_lines_between_blocks_into_empty_paragraphs() {
+        let mut blocks = vec!["one".to_string(), "two".to_string()];
+        let mut separators = vec!["\n\n\n\n\n\n".to_string()];
+        open_paragraphs(&mut blocks, &mut separators);
+        assert_eq!(blocks, ["one", "", "", "two"]);
+        assert_eq!(separators, ["\n\n", "\n\n", "\n\n"]);
+    }
+
+    #[test]
+    fn leaves_a_gap_of_one_paragraph_break_as_it_is() {
+        for gap in ["\n\n", "\n\n\n", "\n   \n"] {
+            let mut blocks = vec!["one".to_string(), "two".to_string()];
+            let mut separators = vec![gap.to_string()];
+            open_paragraphs(&mut blocks, &mut separators);
+            assert_eq!(blocks, ["one", "two"], "{gap:?}");
+            assert_eq!(separators, [gap], "{gap:?}");
+        }
+    }
+
+    /// The gap is cut in more places, never rewritten: what the pieces come to is the
+    /// gap, so a document only read still saves back byte for byte.
+    #[test]
+    fn keeps_every_byte_of_a_gap_it_opens() {
+        for gap in ["\n\n\n\n", "\n\n\n\n\n", "\n  \n\t\n\n", "\n\n\n\n\n\n\n"] {
+            let mut blocks = vec!["one".to_string(), "two".to_string()];
+            let mut separators = vec![gap.to_string()];
+            open_paragraphs(&mut blocks, &mut separators);
+            assert_eq!(separators.concat(), gap, "{gap:?}");
+            assert!(blocks.len() > 2, "{gap:?}");
+            assert!(blocks[1..blocks.len() - 1].iter().all(String::is_empty), "{gap:?}");
+        }
+    }
+
+    #[test]
+    fn opens_the_blank_lines_of_a_document_but_not_its_edges() {
+        let mut segments = parse::segments("\n\n\nfirst\n\n\n\nsecond\n\n\n");
+        open_paragraphs_document(&mut segments);
+        assert_eq!(segments.blocks, ["first", "", "second"]);
+        assert_eq!(segments.gaps, ["\n\n\n", "\n\n", "\n\n", "\n\n\n"]);
+    }
+
+    #[test]
+    fn opens_the_blank_lines_of_a_block_that_was_typed_into_several() {
+        let (blocks, separators) = replacement("one\n\n\n\ntwo");
+        assert_eq!(blocks, ["one", "", "two"]);
+        assert_eq!(separators, ["\n\n", "\n\n"]);
     }
 
     /// Whitespace at the ends of a block belongs to the block: the writer can still

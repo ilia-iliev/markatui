@@ -6,6 +6,7 @@
 //! a line already carries is [`style::prefix`]'s answer, asked here rather than worked
 //! out a second time.
 
+use crate::active::Step;
 use crate::parse::Kind;
 use crate::style::{self, Marker, Prefix};
 use crate::text::{byte_offset, length};
@@ -147,8 +148,8 @@ pub struct Item {
     pub empty: bool,
 }
 
-/// The item `line` is, if it is one. A heading or a plain line is not: Enter in those
-/// does what Enter has always done.
+/// The item `line` is, if it is one — a list item, or a quoted line, which goes on the
+/// same way. A heading or a plain line is not: Enter in those ends the block.
 pub fn item(line: &str) -> Option<Item> {
     let prefix = lead(line);
     let ticked = box_len(line, &prefix);
@@ -156,6 +157,10 @@ pub fn item(line: &str) -> Option<Item> {
         Marker::Bullet if ticked > 0 => "- [ ] ".to_string(),
         Marker::Bullet => "- ".to_string(),
         Marker::Numbered(number) => next_number(number),
+        // A quote goes on by the line, with nothing under its markers to carry but the
+        // markers themselves. A line left empty says the quote is over, the same as an
+        // empty item says the list is.
+        _ if prefix.quote > 0 => String::new(),
         _ => return None,
     };
     let len = prefix.len + ticked;
@@ -230,6 +235,76 @@ fn column_at(table: &str, cursor: usize) -> Option<usize> {
         seen = end + 1;
     }
     None
+}
+
+/// The row Enter opens under the one the cursor is in: as many empty cells as that row
+/// has. A row with nothing written in any of its cells is how a writer says the table is
+/// done, so the whole of it is what comes off — a row is its own marker.
+pub fn row(line: &str) -> Item {
+    let cells = split_row(line);
+    Item {
+        next: format!("|{}", "  |".repeat(cells.len().max(1))),
+        len: length(line),
+        empty: cells.iter().all(|cell| cell.is_empty()),
+    }
+}
+
+/// What one level of indent is written as. Two spaces: enough for markdown to read the
+/// line as nested, and what the list under a list here already carries.
+const INDENT: &str = "  ";
+
+/// The lines one level further in, or one level back out. A line with no indent left to
+/// give back stays where it is, and a single space counts as the level it was meant to be.
+pub fn indented(lines: &[&str], step: Step) -> Vec<String> {
+    lines
+        .iter()
+        .map(|line| match step > 0 {
+            true => format!("{INDENT}{line}"),
+            false => line
+                .strip_prefix(INDENT)
+                .or_else(|| line.strip_prefix(' '))
+                .unwrap_or(line)
+                .to_string(),
+        })
+        .collect()
+}
+
+/// Where the cursor lands one cell along in `table`, counted in characters. The rows run
+/// on into one another, so the cell after the last of a row is the first of the row
+/// below. `None` where there is no cell that way: Tab out of the last cell, Shift+Tab out
+/// of the first.
+pub fn cell_step(table: &str, cursor: usize, step: Step) -> Option<usize> {
+    let cells = cells(table);
+    let standing = cells.iter().rposition(|cell| *cell <= cursor);
+    let wanted = match (standing, step > 0) {
+        (Some(standing), true) => standing + 1,
+        (Some(standing), false) => standing.checked_sub(1)?,
+        // Before the first cell of the table, which is where the next cell along is.
+        (None, true) => 0,
+        (None, false) => return None,
+    };
+    cells.get(wanted).copied()
+}
+
+/// Where each cell of a table starts, in characters: just inside the pipe that opens it,
+/// past the space a written-out table puts there. The pipe that closes a row opens no
+/// cell, which is what tells the end of a row from the middle of one.
+fn cells(table: &str) -> Vec<usize> {
+    let mut cells = Vec::new();
+    let mut start = 0;
+    for line in table.lines() {
+        let characters: Vec<char> = line.chars().collect();
+        for (at, character) in characters.iter().enumerate() {
+            let rest = &characters[at + 1..];
+            if *character != '|' || rest.iter().all(|character| character.is_whitespace()) {
+                continue;
+            }
+            let space = usize::from(rest.first() == Some(&' '));
+            cells.push(start + at + 1 + space);
+        }
+        start += characters.len() + 1;
+    }
+    cells
 }
 
 #[cfg(test)]
@@ -324,6 +399,51 @@ mod tests {
     fn leaves_a_block_that_is_not_a_table_alone() {
         assert!(aligned("just words", 3, Align::Left).is_none());
         assert!(aligned("| a | b |\n| 1 | 2 |", 3, Align::Left).is_none());
+    }
+
+    /// A quote goes on by the line the way a list goes on by the item, and a line left
+    /// empty ends both.
+    #[test]
+    fn carries_the_quote_markers_onto_the_next_line() {
+        assert_eq!(item("> quoted").expect("a quoted line").next, "> ");
+        assert_eq!(item("> quoted").expect("a quoted line").len, 2);
+        assert_eq!(item("> > deeper").expect("a quoted line").next, "> > ");
+        assert_eq!(item("> - one").expect("a quoted item").next, "> - ");
+        assert!(item("> ").expect("a quoted line").empty);
+        assert!(!item("> quoted").expect("a quoted line").empty);
+    }
+
+    #[test]
+    fn opens_a_row_with_as_many_cells_as_the_one_the_cursor_is_in() {
+        assert_eq!(row("| a | b |").next, "|  |  |");
+        assert_eq!(row("| a | b | c |").next, "|  |  |  |");
+        assert_eq!(row("| --- | --- |").next, "|  |  |");
+        assert!(!row("| a | b |").empty);
+        assert!(row("|  |  |").empty);
+        assert_eq!(row("|  |  |").len, 7);
+    }
+
+    #[test]
+    fn takes_a_line_in_and_out_a_level() {
+        assert_eq!(indented(&["- one", "- two"], 1), ["  - one", "  - two"]);
+        assert_eq!(indented(&["  - one"], -1), ["- one"]);
+        // A line indented by one space came from somewhere else; it still comes back out.
+        assert_eq!(indented(&[" - one"], -1), ["- one"]);
+        assert_eq!(indented(&["- one"], -1), ["- one"]);
+    }
+
+    #[test]
+    fn walks_the_cells_of_a_table() {
+        let table = "| a | b |\n| --- | --- |\n|  |  |";
+        // From inside the first cell to the second, then on into the row below.
+        assert_eq!(cell_step(table, 2, 1), Some(6));
+        assert_eq!(cell_step(table, 6, 1), Some(12));
+        assert_eq!(cell_step(table, 6, -1), Some(2));
+        assert_eq!(cell_step(table, 2, -1), None);
+        // The empty cells of the last row are cells like any other; past them is nothing.
+        assert_eq!(cell_step(table, 24, 1), Some(26));
+        assert_eq!(cell_step(table, 26, 1), Some(29));
+        assert_eq!(cell_step(table, 29, 1), None);
     }
 
     #[test]

@@ -15,7 +15,8 @@ use crate::marks::{self, Align, Mark};
 use crate::parse;
 use crate::state;
 use crate::storage;
-use crate::text::byte_offset;
+use crate::style;
+use crate::text::{byte_offset, length};
 use std::collections::VecDeque;
 use std::fs;
 use std::io::ErrorKind;
@@ -95,9 +96,14 @@ impl Editor {
     /// was left in: that is where a terminal can draw it, and the writer opened the file
     /// to look at the picture. The document then says something the file does not, which
     /// is why it opens with work to save.
+    ///
+    /// The blank lines a run of them left between two blocks become empty paragraphs at
+    /// the same time. That one costs nothing to save: the source is cut in more places,
+    /// not changed.
     fn read(source: &str, path: PathBuf, error: Option<String>) -> Self {
         let mut segments = parse::segments(source);
         let hoisted = blocks::hoist_document(&mut segments);
+        blocks::open_paragraphs_document(&mut segments);
         let blocks: Vec<Arc<String>> = segments.blocks.into_iter().map(Arc::new).collect();
         let mut editor = Editor {
             active: Active::new(&blocks[0], usize::MAX),
@@ -206,19 +212,29 @@ impl Editor {
             }
             return;
         }
-        if step < 0 {
-            self.merge_with_previous();
+        match step < 0 {
+            true => self.merge_with_previous(),
+            false => self.merge_with_next(),
         }
     }
 
-    /// Break the block in two, or add a line to it. A second Enter ends the block rather
-    /// than leaving a blank line in it — the newline the first one left is taken back out.
+    /// Enter: the block ends here and the next one opens under it, which is what Enter
+    /// means in every editor a writer arrives from. A line break inside the block is
+    /// Shift+Enter — [`Editor::line_break`].
     ///
-    /// A list is the exception: Enter in one opens the next item rather than a bare line,
-    /// and Enter on an item with nothing in it says the list is over.
+    /// What goes on by the line ends differently. A list opens the next item, a quote the
+    /// next quoted line, a table the next row, and a line left empty in any of them says
+    /// that run is over. A fence has nothing Enter can end: a blank line in code is a
+    /// blank line of code, so the block only ends where the cursor has come to rest past
+    /// the fence that closes it.
     pub fn enter(&mut self) {
         if self.take_spanning_selection("") {
             return;
+        }
+        match self.kind() {
+            parse::Kind::Code if !self.past_closing_fence() => return self.line_break(),
+            parse::Kind::Table => return self.enter_row(),
+            _ => {}
         }
         match self.active.item() {
             Some(item) if !item.empty => {
@@ -235,13 +251,78 @@ impl Editor {
                     return;
                 }
             }
-            None if !self.active.ends_block() => {
-                self.insert("\n");
-                return;
-            }
             None => {}
         }
         self.split_block();
+    }
+
+    /// Enter on a terminal that cannot tell Shift+Enter from Enter: the first press
+    /// leaves a line break in the paragraph and the second ends it, which is the only way
+    /// to have both where there is one key for them. Everything that goes on by the
+    /// line — a list, a quote, a table, a fence — ends the way it does anywhere else.
+    pub fn enter_or_break(&mut self) {
+        if self.kind() == parse::Kind::Paragraph
+            && self.active.item().is_none()
+            && !self.active.ends_block()
+        {
+            self.line_break();
+            return;
+        }
+        self.enter();
+    }
+
+    /// Shift+Enter: a line break inside the block, which markdown reads as one line of a
+    /// paragraph running on into the next.
+    pub fn line_break(&mut self) {
+        self.insert("\n");
+    }
+
+    /// Tab: a list item a level in or out, the next cell of a table, and a tab character
+    /// anywhere else. Shift+Tab is the same key the other way, which types nothing.
+    pub fn tab(&mut self, step: Step) {
+        match self.kind() {
+            parse::Kind::Table if self.active.step_cell(step) => self.record_cursor(),
+            parse::Kind::List if self.active.indent_lines(step) => self.record_edit(),
+            // A table with no cell that way and a list with no indent left to give back:
+            // the key does nothing rather than typing into either of them.
+            parse::Kind::Table | parse::Kind::List => {}
+            _ if step > 0 => self.insert("\t"),
+            _ => {}
+        }
+    }
+
+    /// What the block being edited is, which is what says how Enter and Tab read.
+    fn kind(&self) -> parse::Kind {
+        parse::kind(self.active.text())
+    }
+
+    /// Another row under the one the cursor is in, with as many cells as that one and the
+    /// cursor in the first of them. A row is not broken in the middle the way an item is:
+    /// wherever the cursor stands in it, the new row goes under the whole of it. A row
+    /// left empty says the table is done, the way an empty item ends a list.
+    fn enter_row(&mut self) {
+        self.active.to_row_end();
+        let row = marks::row(self.active.line());
+        if row.empty {
+            self.active.end_item(&row);
+            self.split_block();
+            return;
+        }
+        let opened = self.active.cursor() + 1;
+        self.active.insert(&format!("\n{}", row.next));
+        self.active.place(opened);
+        self.active.step_cell(1);
+        self.record_edit();
+    }
+
+    /// Whether the cursor has come to rest past the fence that closes a code block, where
+    /// there is no more code to write and Enter means the paragraph after it. A fence
+    /// still being written has no closing line yet, and Enter in it is another line.
+    fn past_closing_fence(&self) -> bool {
+        let text = self.active.text();
+        self.active.cursor() == length(text)
+            && text.lines().count() > 1
+            && text.lines().next_back().is_some_and(style::fences)
     }
 
     /// Break the block at the cursor, dropping the newline the writer typed to get here.
@@ -277,6 +358,25 @@ impl Editor {
         self.index = previous;
         self.active = Active::new(&self.blocks[previous], cursor);
         self.record_run(EditRun::Deleting(-1));
+    }
+
+    /// Pull the block below into this one, which is what Delete at the end of a block
+    /// means: the mirror of Backspace at the start of the one below it.
+    fn merge_with_next(&mut self) {
+        let next = self.index + 1;
+        if next >= self.blocks.len() {
+            return;
+        }
+        let cursor = self.active.cursor();
+        let mut joined = self.active.text().to_string();
+        joined.push_str(&self.blocks[next]);
+        self.blocks[self.index] = Arc::new(joined);
+        // The source between the two goes with the seam; what followed the second block
+        // now follows the joined one.
+        self.gaps[next] = self.gaps[next + 1].clone();
+        self.remove_blocks(next, 1);
+        self.active = Active::new(&self.blocks[self.index], cursor);
+        self.record_run(EditRun::Deleting(1));
     }
 
     /// Replace a selection running through more than one block with `insert`, joining
@@ -536,15 +636,215 @@ mod tests {
     }
 
     #[test]
-    fn breaks_a_block_in_two_on_the_second_enter() {
+    fn breaks_a_block_in_two_on_enter() {
         let mut editor = document("one two");
         editor.activate(0, 3);
-        editor.enter();
-        assert_eq!(texts(&editor), ["one\n two"]);
         editor.enter();
         assert_eq!(texts(&editor), ["one", " two"]);
         assert_eq!(editor.index(), 1);
         assert_eq!(editor.source(), "one\n\n two");
+    }
+
+    /// Shift+Enter is the line break Enter used to leave: one paragraph, written on two
+    /// lines.
+    #[test]
+    fn leaves_a_line_break_in_the_block_on_shift_enter() {
+        let mut editor = document("one two");
+        editor.activate(0, 3);
+        editor.line_break();
+        assert_eq!(texts(&editor), ["one\n two"]);
+        assert_eq!(editor.index(), 0);
+    }
+
+    /// A terminal that cannot tell the two apart keeps the older rule, which is the only
+    /// way a writer on one can have both.
+    #[test]
+    fn breaks_the_line_first_and_the_block_second_without_shift_enter() {
+        let mut editor = document("one two");
+        editor.activate(0, 3);
+        editor.enter_or_break();
+        assert_eq!(texts(&editor), ["one\n two"]);
+        editor.enter_or_break();
+        assert_eq!(texts(&editor), ["one", " two"]);
+        // What goes on by the line ends on the first press there as it does anywhere.
+        let mut editor = document("# Title");
+        editor.activate(0, 7);
+        editor.enter_or_break();
+        assert_eq!(texts(&editor), ["# Title", ""]);
+    }
+
+    /// A blank line in code is a blank line of code: the fence is what closes a code
+    /// block, and Enter inside one never breaks it in half.
+    #[test]
+    fn writes_lines_of_code_on_enter_inside_a_fence() {
+        let mut editor = document("```rust\nfn main() {}\n```\n\nafter");
+        editor.activate(0, 20);
+        editor.enter();
+        editor.enter();
+        assert_eq!(texts(&editor), ["```rust\nfn main() {}\n\n\n```", "after"]);
+        assert_eq!(editor.index(), 0);
+    }
+
+    /// Past the closing fence there is no more code to write, so Enter means the
+    /// paragraph after it — otherwise a code block at the foot of a document is a room
+    /// with no door.
+    #[test]
+    fn ends_a_code_block_on_enter_past_its_closing_fence() {
+        let mut editor = document("```rust\nfn main() {}\n```");
+        editor.activate(0, 24);
+        editor.enter();
+        assert_eq!(texts(&editor), ["```rust\nfn main() {}\n```", ""]);
+        assert_eq!(editor.index(), 1);
+    }
+
+    /// A table goes on by the row, with as many cells as the row the cursor is in.
+    #[test]
+    fn opens_another_row_on_enter_in_a_table() {
+        let mut editor = document("| a | b |\n| --- | --- |\n| 1 | 2 |");
+        editor.activate(0, 28);
+        editor.enter();
+        assert_eq!(texts(&editor), ["| a | b |\n| --- | --- |\n| 1 | 2 |\n|  |  |"]);
+        // In the first cell of it, which is where the writer types next.
+        assert_eq!(editor.active.cursor(), 36);
+        // The row left empty says the table is done, the way an empty item ends a list.
+        editor.enter();
+        assert_eq!(texts(&editor), ["| a | b |\n| --- | --- |\n| 1 | 2 |", ""]);
+        assert_eq!(editor.index(), 1);
+    }
+
+    /// The row of dashes belongs to the heading above it: a row opened from the heading
+    /// goes under the dashes, not between them and the heading.
+    #[test]
+    fn opens_a_row_under_the_dashes_when_the_cursor_is_in_the_heading() {
+        let mut editor = document("| a | b |\n| --- | --- |");
+        editor.activate(0, 3);
+        editor.enter();
+        assert_eq!(texts(&editor), ["| a | b |\n| --- | --- |\n|  |  |"]);
+    }
+
+    #[test]
+    fn takes_a_list_item_in_and_out_a_level_on_tab() {
+        let mut editor = document("- one\n- two");
+        editor.activate(0, 8);
+        editor.tab(1);
+        assert_eq!(texts(&editor), ["- one\n  - two"]);
+        editor.tab(-1);
+        assert_eq!(texts(&editor), ["- one\n- two"]);
+        // Nothing left to give back, and nothing typed in its place.
+        editor.tab(-1);
+        assert_eq!(texts(&editor), ["- one\n- two"]);
+    }
+
+    #[test]
+    fn walks_the_cells_of_a_table_on_tab() {
+        let mut editor = document("| a | b |\n| --- | --- |\n| 1 | 2 |");
+        editor.activate(0, 2);
+        editor.tab(1);
+        assert_eq!(editor.active.cursor(), 6);
+        editor.tab(-1);
+        assert_eq!(editor.active.cursor(), 2);
+        // Nothing is typed into a table by Tab, whichever way it goes.
+        assert_eq!(texts(&editor), ["| a | b |\n| --- | --- |\n| 1 | 2 |"]);
+    }
+
+    #[test]
+    fn types_a_tab_where_there_is_nothing_to_walk() {
+        let mut editor = document("words");
+        editor.activate(0, 5);
+        editor.tab(1);
+        assert_eq!(texts(&editor), ["words\t"]);
+        editor.tab(-1);
+        assert_eq!(texts(&editor), ["words\t"]);
+    }
+
+    /// Delete at the end of a block pulls the next one up, which is the mirror of
+    /// Backspace at the start of the one below.
+    #[test]
+    fn pulls_the_next_block_up_on_delete_at_the_end_of_one() {
+        let mut editor = document("one\n\ntwo\n\nthree");
+        editor.activate(0, 3);
+        editor.delete(1);
+        assert_eq!(texts(&editor), ["onetwo", "three"]);
+        assert_eq!(editor.index(), 0);
+        assert_eq!(editor.active.cursor(), 3);
+        assert_eq!(editor.source(), "onetwo\n\nthree");
+        // At the end of the last block there is nothing to pull up.
+        editor.activate(1, 5);
+        editor.delete(1);
+        assert_eq!(texts(&editor), ["onetwo", "three"]);
+    }
+
+    /// A quote goes on by the line: the markers come along, and a line left empty ends it.
+    #[test]
+    fn carries_the_quote_markers_onto_the_next_line() {
+        let mut editor = document("> quoted");
+        editor.activate(0, 8);
+        editor.enter();
+        assert_eq!(texts(&editor), ["> quoted\n> "]);
+        editor.enter();
+        assert_eq!(texts(&editor), ["> quoted", ""]);
+        assert_eq!(editor.index(), 1);
+    }
+
+    /// A run of blank lines in a file is what a run of Enters writes, and it comes back
+    /// as the empty paragraphs it was typed as — the same rows on the screen the writer
+    /// left, and the same bytes on the disk.
+    #[test]
+    fn opens_the_blank_lines_of_a_file_into_empty_paragraphs() {
+        let editor = document("one\n\n\n\n\n\ntwo");
+        assert_eq!(texts(&editor), ["one", "", "", "two"]);
+        assert_eq!(editor.source(), "one\n\n\n\n\n\ntwo");
+        assert!(!editor.dirty());
+    }
+
+    /// What Enter writes is what opening reads back, so a document does not grow a
+    /// paragraph every time it goes through the disk.
+    #[test]
+    fn reads_back_the_blank_paragraphs_it_wrote() {
+        let mut editor = document("one");
+        editor.activate(0, 3);
+        // Once to end the block, once again for the paragraph left blank between them.
+        editor.enter();
+        editor.enter();
+        editor.insert("two");
+        let source = editor.source();
+        assert_eq!(texts(&editor), ["one", "", "two"]);
+        assert_eq!(source, "one\n\n\n\ntwo");
+        assert_eq!(texts(&document(&source)), ["one", "", "two"]);
+    }
+
+    /// A heading is one line, so Enter ends it where a paragraph would take a second
+    /// press: what follows a heading is a paragraph, with the one blank line under it
+    /// that a heading is written with.
+    #[test]
+    fn ends_a_heading_on_the_first_enter() {
+        let mut editor = document("# Title");
+        editor.activate(0, 7);
+        editor.enter();
+        assert_eq!(texts(&editor), ["# Title", ""]);
+        assert_eq!(editor.index(), 1);
+        editor.insert("body");
+        assert_eq!(editor.source(), "# Title\n\nbody");
+    }
+
+    /// Enter halfway through a heading breaks it there: the words in front of the cursor
+    /// stay the heading, the words behind it become the paragraph under it.
+    #[test]
+    fn breaks_a_heading_where_the_cursor_stands() {
+        let mut editor = document("# Big Title");
+        editor.activate(0, 5);
+        editor.enter();
+        assert_eq!(texts(&editor), ["# Big", " Title"]);
+        assert_eq!(editor.source(), "# Big\n\n Title");
+    }
+
+    #[test]
+    fn ends_a_setext_heading_on_the_first_enter() {
+        let mut editor = document("Title\n=====");
+        editor.activate(0, 11);
+        editor.enter();
+        assert_eq!(texts(&editor), ["Title\n=====", ""]);
+        assert_eq!(editor.index(), 1);
     }
 
     #[test]
@@ -797,7 +1097,6 @@ mod tests {
         editor.activate(0, 3);
         editor.insert(" ![a](1.png)");
         editor.enter();
-        editor.enter();
         assert_eq!(texts(&editor), ["one", "![a](1.png)", " two"]);
         assert_eq!(editor.index(), 2);
         assert!(editor.hoisted);
@@ -928,7 +1227,7 @@ mod tests {
     fn undoes_a_split_and_a_merge_whole() {
         let mut editor = document("one two");
         editor.activate(0, 3);
-        editor.enter();
+        editor.line_break();
         editor.enter();
         assert_eq!(texts(&editor), ["one", " two"]);
         editor.undo();

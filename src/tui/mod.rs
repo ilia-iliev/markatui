@@ -24,6 +24,7 @@ use crate::storage;
 use crate::tui::clipboard::{Clipboard, Paste};
 use crate::tui::images::Gallery;
 use crate::tui::keys::Action;
+use crate::tui::probe::Keyboard;
 use crossterm::event::{self, Event};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
@@ -114,6 +115,9 @@ struct App {
     viewport: usize,
     /// What the config said that could not be read, until the first key is pressed.
     notice: Vec<String>,
+    /// What the terminal answers about its keyboard, which says whether Shift+Enter
+    /// arrives as a key of its own or as a plain Enter.
+    keyboard: Keyboard,
     pictures: Vec<PastedPicture>,
     quit: bool,
 }
@@ -129,7 +133,7 @@ pub fn run(path: &Path) -> io::Result<()> {
     let mut terminal = terminal::start(capabilities, background)?;
     // The picker is asked for once the screen is ours: the terminal answers the question
     // by writing to it, and this way it is our screen that gets written on.
-    let mut app = App::open(path, Gallery::new(probe::pictures(), path));
+    let mut app = App::open(path, Gallery::new(probe::pictures(), path), capabilities.keyboard);
     // Whatever the config could not read goes first: it is the older news of the two, and
     // the writer will want to hear it before anything the document did on the way in.
     app.notice.splice(..0, notice);
@@ -141,7 +145,7 @@ pub fn run(path: &Path) -> io::Result<()> {
 }
 
 impl App {
-    fn open(path: &Path, gallery: Gallery) -> Self {
+    fn open(path: &Path, gallery: Gallery, keyboard: Keyboard) -> Self {
         let mut app = App {
             editor: Editor::open(path),
             document: view::Document::default(),
@@ -159,6 +163,7 @@ impl App {
             generation: lint::generation(),
             viewport: 1,
             notice: Vec::new(),
+            keyboard,
             pictures: Vec::new(),
             quit: false,
         };
@@ -269,12 +274,23 @@ impl App {
         self.note_hoisted();
     }
 
+    /// Enter, which ends the block. A terminal that cannot tell Shift+Enter from Enter
+    /// leaves the writer one key for the two things, so there it keeps the older rule: a
+    /// first press leaves a line break and a second ends the block.
+    fn enter(&mut self) {
+        match self.keyboard {
+            Keyboard::Kitty => self.edit(Editor::enter),
+            Keyboard::Legacy => self.edit(Editor::enter_or_break),
+        }
+    }
+
     fn act_editing(&mut self, action: Action) {
         match action {
             Action::Type(text) => self.edit(|editor| editor.insert(&text)),
             Action::Delete(step) => self.edit(|editor| editor.delete(step)),
-            Action::Enter => self.edit(Editor::enter),
-            Action::Tab => self.edit(|editor| editor.insert("\t")),
+            Action::Enter => self.enter(),
+            Action::LineBreak => self.edit(Editor::line_break),
+            Action::Tab(step) => self.edit(|editor| editor.tab(step)),
             Action::Surround(marker) => self.edit(|editor| editor.surround(marker)),
             Action::Tag(tag) => self.edit(|editor| editor.wrap(tag)),
             Action::Link(prefix) => self.edit(|editor| editor.insert_link(prefix)),
@@ -328,7 +344,7 @@ impl App {
             Action::Delete(_) => {
                 typed.pop();
             }
-            Action::Tab => return self.editor.switch_field(),
+            Action::Tab(_) => return self.editor.switch_field(),
             Action::CycleSearch(step) => return self.editor.cycle_search(step),
             // Enter in the half holding the word says it is typed; in the half holding
             // the replacement it is the swap being asked for.
@@ -693,12 +709,51 @@ mod tests {
     /// The editor on the document at `path`, drawing pictures as the mosaic a test can
     /// make: there is no terminal here to ask for a protocol of its own.
     fn app(path: &Path) -> App {
-        let mut app = App::open(path, Gallery::new(Picker::halfblocks(), path));
+        let mut app = App::open(path, Gallery::new(Picker::halfblocks(), path), Keyboard::Kitty);
         // Wherever the last session left the cursor and whichever mode it was left in, a
         // test starts at the top of the document in the plain one.
         app.editor.activate(0, 0);
         app.set_mode("plain");
         app
+    }
+
+    /// Enter ends the block, and Shift+Enter is the line break inside it. A terminal that
+    /// cannot tell the two apart leaves the writer one key for both, so there the older
+    /// rule stands: the first press breaks the line and the second ends the block.
+    #[test]
+    fn ends_the_block_on_enter_and_breaks_the_line_where_the_terminal_can_say_so() {
+        let path = document("enter", "one two");
+        let mut app = app(&path);
+        app.editor.activate(0, 3);
+        app.act(Action::LineBreak);
+        assert_eq!(app.editor.block(0), "one\n two");
+        app.act(Action::Enter);
+        assert_eq!(app.editor.blocks().len(), 2);
+        assert_eq!(app.editor.block(1), " two");
+
+        let mut legacy =
+            App::open(&path, Gallery::new(Picker::halfblocks(), &path), Keyboard::Legacy);
+        legacy.set_mode("plain");
+        legacy.editor.activate(0, 3);
+        legacy.act(Action::Enter);
+        assert_eq!(legacy.editor.block(0), "one\n two", "the first press broke the block");
+        legacy.act(Action::Enter);
+        assert_eq!(legacy.editor.blocks().len(), 2);
+        forget(&path);
+    }
+
+    /// Tab is the document's as well as the search bar's: a level of indent in a list,
+    /// and the cell along in a table.
+    #[test]
+    fn takes_tab_to_the_block_the_cursor_is_in() {
+        let path = document("tab", "- one\n- two");
+        let mut app = app(&path);
+        app.editor.activate(0, 8);
+        app.act(Action::Tab(1));
+        assert_eq!(app.editor.block(0), "- one\n  - two");
+        app.act(Action::Tab(-1));
+        assert_eq!(app.editor.block(0), "- one\n- two");
+        forget(&path);
     }
 
     /// One frame, as one string per row with the trailing spaces off.
@@ -849,13 +904,13 @@ mod tests {
         let mut left = app(&path);
         left.act(Action::ToggleReading);
         left.remember();
-        let opened = App::open(&path, Gallery::new(Picker::halfblocks(), &path));
+        let opened = App::open(&path, Gallery::new(Picker::halfblocks(), &path), Keyboard::Kitty);
         assert_eq!(opened.mode_word(), "reading");
 
         let mut left = app(&path);
         left.act(Action::ToggleGrammar);
         left.remember();
-        let opened = App::open(&path, Gallery::new(Picker::halfblocks(), &path));
+        let opened = App::open(&path, Gallery::new(Picker::halfblocks(), &path), Keyboard::Kitty);
         assert_eq!(opened.mode_word(), "grammar-off");
 
         if let Some(held) = held {
@@ -878,7 +933,7 @@ mod tests {
         }
         assert_eq!(app.editor.search.count, 2);
 
-        app.act(Action::Tab);
+        app.act(Action::Tab(1));
         for letter in "dog".chars() {
             app.act(Action::Type(letter.to_string()));
         }
@@ -892,7 +947,7 @@ mod tests {
         app.act(Action::ReplaceAll);
         assert_eq!(app.editor.block(0), "a dog and a dog");
 
-        app.act(Action::Tab);
+        app.act(Action::Tab(1));
         app.act(Action::Enter);
         assert!(app.mode == Mode::Editing, "Enter left the bar open");
         forget(&path);
