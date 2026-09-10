@@ -108,9 +108,11 @@ still() {
 # to be split into them.
 press() {
     local key=$1 shot=$2 before=$3
-    for _ in $(seq 5); do
+    for _ in $(seq 8); do
+        # A press is sent with a moment on either side of it: a virtual keyboard that is
+        # torn down in the same breath as the press can take the press down with it.
         # shellcheck disable=SC2086
-        wtype $key
+        wtype -s 50 $key -s 150
         for _ in $(seq 8); do
             sleep 0.15
             grim -g "$geometry" "$shot"
