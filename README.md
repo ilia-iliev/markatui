@@ -20,6 +20,18 @@ Ctrl+K on a link follows it instead, handing it to `xdg-open`.
 
 Copy/paste uses the machine's clipboard.
 
+## Mouse
+
+Click to put the caret where you clicked. Click a link to follow it - that means a link in
+a block drawn as it reads; the block under the cursor shows its markdown, so a click there
+puts the caret in the source instead. Double-click selects a word, dragging selects a
+range across as many blocks as you drag over, and the wheel scrolls without dragging the
+cursor along - the next keystroke brings the window back to it.
+
+A terminal that has handed the mouse over stops drawing its own selection with a plain
+drag; most keep Shift+drag for it. `mouse = false` in the config gives the mouse back to
+the terminal.
+
 ## Config
 
 `~/.config/markatui/config.toml` To choose a preset:

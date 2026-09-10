@@ -4,6 +4,7 @@
 //! content_width = 72
 //! theme = "terminal"
 //! footer = "band"
+//! mouse = true
 //!
 //! [palette]
 //! accent = "#C2622F"
@@ -51,6 +52,11 @@ pub struct Config {
     /// palette paints, or the page's own two colours one way round or the other.
     pub footer: Footer,
     pub keys: Keymap,
+    /// Whether the editor takes the mouse over. It is on, and the one reason to turn it
+    /// off is that a terminal grabbed for the mouse no longer draws its own selection with
+    /// a plain drag — most of them keep Shift+drag for that, and this setting is for the
+    /// ones that do not.
+    pub mouse: bool,
     /// The checker's rules the writer has spoken for, on or off. What is not named here
     /// stays as the checker ships it.
     pub checks: lint::Checks,
@@ -65,6 +71,7 @@ impl Default for Config {
             palette,
             footer: Footer::default(),
             keys: Keymap::default(),
+            mouse: true,
             checks: lint::Checks::new(),
         }
     }
@@ -211,6 +218,7 @@ fn set(config: &mut Config, table: &str, key: &str, value: &str) -> Result<(), S
             "content_width" => config.content_width = width(value)?,
             "theme" => config.apply(theme(value)?),
             "footer" => config.footer = footer(value)?,
+            "mouse" => config.mouse = boolean(value)?,
             // Kept for existing config files. A named theme is clearer for new ones.
             "inherit_background" => config.inherit_background = boolean(value)?,
             _ => return Err(unknown(key)),
@@ -413,6 +421,16 @@ mod tests {
         let terminal = read_well("theme = \"terminal\"\nfooter = \"invert\"\n");
         assert_eq!(theme::prompt_for(&terminal).bg, None);
         assert_eq!(read_well("").footer, Footer::Band);
+    }
+
+    /// The mouse is on, and a terminal whose own selection the writer would rather keep
+    /// is the one reason to say so.
+    #[test]
+    fn the_mouse_is_on_until_the_config_says_otherwise() {
+        assert!(read_well("").mouse);
+        assert!(!read_well("mouse = false\n").mouse);
+        let (_, problems) = read("mouse = \"yes\"\n");
+        assert_eq!(problems.len(), 1);
     }
 
     #[test]

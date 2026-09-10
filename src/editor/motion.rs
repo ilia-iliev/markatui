@@ -133,6 +133,25 @@ impl Editor {
         self.record_cursor();
     }
 
+    /// Take the selection out to `at` characters into block `target`, from wherever it
+    /// started: a drag with the mouse, and Shift with a click, which is the same thing
+    /// done in one movement.
+    pub fn extend_to(&mut self, target: usize, at: usize) {
+        self.active.start_selection();
+        self.go_to(target.min(self.blocks.len() - 1), true);
+        self.active.place(at);
+        self.record_cursor();
+    }
+
+    /// Select the word `at` stands in, in the block the cursor is already in, which is
+    /// what a double click asks for.
+    pub fn select_word(&mut self, at: usize) {
+        self.clear_selection();
+        let (start, end) = self.active.word(at);
+        self.active.select(start, end);
+        self.record_cursor();
+    }
+
     pub fn select_all(&mut self) {
         self.store_active();
         self.anchor = Some((0, 0));

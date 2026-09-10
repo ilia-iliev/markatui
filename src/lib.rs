@@ -6,7 +6,7 @@
 //! - the core — [`blocks`], [`parse`], [`marks`], [`search`], [`spell`], [`lint`],
 //!   [`state`], [`storage`], [`text`], [`style`], [`active`], [`editor`], [`layout`] —
 //!   knows nothing about terminals and is tested without one;
-//! - [`tui`] draws and reads keys through any terminal;
+//! - [`tui`] draws and reads the keyboard and the mouse through any terminal;
 //! - [`tui::probe`] is the only place that asks what this one can do.
 
 pub mod active;

@@ -1,7 +1,8 @@
 //! Taking the terminal over and giving it back: raw mode, a screen of our own, bracketed
-//! paste, the page colour in padding outside the cell grid, and the kitty keyboard flags
-//! where the terminal answers for them.
+//! paste, the mouse, the page colour in padding outside the cell grid, and the kitty
+//! keyboard flags where the terminal answers for them.
 
+use crate::tui::config;
 use crate::tui::probe::{Capabilities, Keyboard};
 use crossterm::event::{
     self, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -13,15 +14,26 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::style::Color;
 use std::io::{self, Stdout, Write};
 
-/// Raw mode, a screen of our own, bracketed paste, and the kitty keyboard flags where the
-/// terminal answers for them. The panic hook puts every one of them back: flags left
-/// pushed after a crash leave the writer's shell with odd keys.
+/// Reporting the pointer moving with no button held, which crossterm asks for along with
+/// the rest of the mouse and which the editor does nothing with: every one of them would
+/// wake the loop and cost a frame, so it is turned back off. What is left is the buttons,
+/// the wheel, and motion while a button is down, which is a drag.
+const HOVER_OFF: &str = "\x1b[?1003l";
+
+/// Raw mode, a screen of our own, bracketed paste, the mouse where the config leaves it
+/// on, and the kitty keyboard flags where the terminal answers for them. The panic hook
+/// puts every one of them back: flags left pushed after a crash leave the writer's shell
+/// with odd keys.
 pub(super) fn start(
     capabilities: Capabilities,
     background: Option<Color>,
 ) -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, event::EnableBracketedPaste)?;
+    if config::get().mouse {
+        execute!(io::stdout(), event::EnableMouseCapture)?;
+        io::stdout().write_all(HOVER_OFF.as_bytes())?;
+    }
     if capabilities.keyboard == Keyboard::Kitty {
         execute!(
             io::stdout(),
@@ -45,6 +57,9 @@ pub(super) fn stop(capabilities: Capabilities, background: Option<Color>) -> io:
     }
     if let Some(command) = background_commands(background).1 {
         io::stdout().write_all(command.as_bytes())?;
+    }
+    if config::get().mouse {
+        execute!(io::stdout(), event::DisableMouseCapture)?;
     }
     execute!(io::stdout(), event::DisableBracketedPaste, LeaveAlternateScreen)?;
     terminal::disable_raw_mode()

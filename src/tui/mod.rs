@@ -6,6 +6,7 @@ pub mod clipboard;
 pub mod config;
 pub mod images;
 pub mod keys;
+mod mouse;
 pub mod open;
 pub mod probe;
 mod scroll;
@@ -91,6 +92,16 @@ struct App {
     reading: bool,
     /// The screen row at the top of the window.
     scroll: usize,
+    /// Whether the window keeps the caret in view. The wheel lets it go, so a writer can
+    /// read on without the line they were writing pulling the screen back; the next thing
+    /// they do with the keyboard takes hold of it again.
+    follow: bool,
+    /// The column of the screen the document is drawn in, as the last frame laid it out,
+    /// which is what turns where the pointer is into where in the document it is.
+    column: Rect,
+    /// When and where the last click landed, so that a second one in the same cell can be
+    /// told from two clicks in the same place.
+    clicked: Option<(Instant, (u16, u16))>,
     /// The column a run of up and down movement is aiming for, so that passing through a
     /// short row does not drag the cursor in to its end for good.
     goal: Option<u16>,
@@ -140,6 +151,9 @@ impl App {
             grammar: true,
             reading: false,
             scroll: 0,
+            follow: true,
+            column: Rect::ZERO,
+            clicked: None,
             goal: None,
             typed_at: None,
             generation: lint::generation(),
@@ -208,6 +222,7 @@ impl App {
         if event::poll(deadline.unwrap_or(TICK))? {
             match event::read()? {
                 Event::Key(key) => self.press(key),
+                Event::Mouse(pointer) => self.point(pointer),
                 Event::Paste(text) => self.act(Action::Type(text)),
                 _ => {}
             }
@@ -239,6 +254,9 @@ impl App {
     }
 
     fn act(&mut self, action: Action) {
+        // Whatever the wheel did to the window, a key takes hold of it again: the writer
+        // is typing, and what they are typing has to be on the screen.
+        self.follow = true;
         if !matches!(action, Action::Row(..)) {
             self.goal = None;
         }
@@ -611,7 +629,10 @@ impl App {
             .min(area.height);
         let text = Rect { height: area.height.saturating_sub(band), ..area };
         self.viewport = text.height as usize;
-        self.follow_the_caret(self.viewport);
+        self.column = view::column(text);
+        if self.follow {
+            self.follow_the_caret(self.viewport);
+        }
         view::draw(frame, text, &self.editor, &self.document, self.scroll);
         // Over the rows the layout left empty for them, and after the text: a picture is
         // drawn by the terminal itself, not out of the cells underneath it.
@@ -641,6 +662,7 @@ fn picture_target(document: &Path, reference: &str) -> io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::Motion;
     use ratatui::backend::TestBackend;
     use ratatui_image::picker::Picker;
 
@@ -1090,6 +1112,191 @@ mod tests {
         // And with the message gone the foot is blank again, the document still where it was.
         app.editor.error = None;
         assert_eq!(frame(&mut app, &mut terminal), quiet);
+        forget(&path);
+    }
+    /// A document with a link in its second block, drawn on a screen wide enough for the
+    /// whole column: the paragraph reads "A paragraph with a link in it." with the link's
+    /// words at columns 17 to 22.
+    const WITH_A_LINK: &str =
+        "# Title\n\nA paragraph with [a link](https://example.com/x) in it.\n";
+
+    fn pointer(kind: event::MouseEventKind, column: u16, row: u16) -> event::MouseEvent {
+        event::MouseEvent { kind, column, row, modifiers: event::KeyModifiers::NONE }
+    }
+
+    fn left_click(column: u16, row: u16) -> event::MouseEvent {
+        pointer(event::MouseEventKind::Down(event::MouseButton::Left), column, row)
+    }
+
+    #[test]
+    fn a_click_puts_the_caret_where_it_landed() {
+        let path = document("click", WITH_A_LINK);
+        let mut app = app(&path);
+        let mut terminal = Terminal::new(TestBackend::new(90, 12)).expect("a test screen");
+        frame(&mut app, &mut terminal);
+
+        // The paragraph is the second block: a row of air above the heading, the heading,
+        // and a row between the two.
+        app.point(left_click(app.column.x + 5, 3));
+
+        assert_eq!(app.editor.index(), 1);
+        assert_eq!(app.editor.active().cursor(), 5);
+        forget(&path);
+    }
+
+    /// A click in the air between two blocks, and one below the last of them, land in the
+    /// document rather than nowhere.
+    #[test]
+    fn a_click_off_the_text_lands_on_the_nearest_row() {
+        let path = document("click-air", WITH_A_LINK);
+        let mut app = app(&path);
+        let mut terminal = Terminal::new(TestBackend::new(90, 12)).expect("a test screen");
+        frame(&mut app, &mut terminal);
+
+        app.point(left_click(app.column.x, 2));
+        assert_eq!(app.editor.index(), 0, "the row between the blocks belongs to the one above");
+
+        app.point(left_click(app.column.x, 9));
+        assert_eq!(app.editor.index(), 1, "a click below the document missed the last block");
+        forget(&path);
+    }
+
+    /// A link is followed while the writer can see the words of it. Once the block is the
+    /// one being edited its markdown is on show, and a click in it is a click in the
+    /// source: the caret goes into the link rather than the desktop opening it.
+    #[test]
+    fn a_click_follows_a_link_only_while_the_block_reads_as_words() {
+        let path = document("click-link", WITH_A_LINK);
+        let mut app = app(&path);
+        let mut terminal = Terminal::new(TestBackend::new(90, 12)).expect("a test screen");
+        frame(&mut app, &mut terminal);
+
+        assert_eq!(app.clicked_link(1, 0, 18).as_deref(), Some("https://example.com/x"));
+        assert_eq!(app.clicked_link(1, 0, 2), None, "the words beside the link are not it");
+        assert_eq!(app.clicked_link(1, 0, 80), None, "the blank past the row is not it");
+
+        app.editor.activate(1, 0);
+        frame(&mut app, &mut terminal);
+        let row = app.document.rows(1)[0].cells.len() as u16;
+        assert!(
+            (0..row).all(|column| app.clicked_link(1, 0, column).is_none()),
+            "the markdown on show was still clicked as a link"
+        );
+        forget(&path);
+    }
+
+    /// Reading mode is nothing but rendered blocks, the one holding the cursor included,
+    /// so a link in it is always a link to follow.
+    #[test]
+    fn a_click_follows_a_link_in_the_active_block_in_reading_mode() {
+        let path = document("click-link-reading", WITH_A_LINK);
+        let mut app = app(&path);
+        let mut terminal = Terminal::new(TestBackend::new(90, 12)).expect("a test screen");
+        app.editor.activate(1, 0);
+        app.set_mode("reading");
+        frame(&mut app, &mut terminal);
+
+        assert_eq!(app.clicked_link(1, 0, 18).as_deref(), Some("https://example.com/x"));
+        forget(&path);
+    }
+
+    #[test]
+    fn a_double_click_selects_the_word_under_it() {
+        let path = document("double-click", WITH_A_LINK);
+        let mut app = app(&path);
+        let mut terminal = Terminal::new(TestBackend::new(90, 12)).expect("a test screen");
+        frame(&mut app, &mut terminal);
+
+        let at = left_click(app.column.x + 4, 3);
+        app.point(at);
+        app.point(at);
+
+        assert_eq!(app.editor.selected_text(), "paragraph");
+        forget(&path);
+    }
+
+    #[test]
+    fn a_drag_takes_the_selection_with_it() {
+        let path = document("drag", WITH_A_LINK);
+        let mut app = app(&path);
+        let mut terminal = Terminal::new(TestBackend::new(90, 12)).expect("a test screen");
+        frame(&mut app, &mut terminal);
+
+        app.point(left_click(app.column.x + 2, 3));
+        frame(&mut app, &mut terminal);
+        app.point(pointer(
+            event::MouseEventKind::Drag(event::MouseButton::Left),
+            app.column.x + 8,
+            3,
+        ));
+
+        assert_eq!(app.editor.selected_text(), "paragr");
+        forget(&path);
+    }
+
+    /// A drag out of the block it started in takes the selection with it, which is the
+    /// only way a mouse has of asking for several blocks at once.
+    #[test]
+    fn a_drag_reaches_into_the_next_block() {
+        let path = document("drag-across", "# Title\n\nA paragraph.\n");
+        let mut app = app(&path);
+        let mut terminal = Terminal::new(TestBackend::new(90, 12)).expect("a test screen");
+        frame(&mut app, &mut terminal);
+
+        app.point(left_click(app.column.x + 2, 1));
+        frame(&mut app, &mut terminal);
+        app.point(pointer(
+            event::MouseEventKind::Drag(event::MouseButton::Left),
+            app.column.x + 1,
+            3,
+        ));
+
+        assert!(app.editor.selected_text().contains("Title"), "{:?}", app.editor.selected_text());
+        assert!(app.editor.selected_text().ends_with('A'), "{:?}", app.editor.selected_text());
+        forget(&path);
+    }
+
+    /// The wheel moves the window and leaves the cursor where it is, so a writer can read
+    /// on without the line they were writing pulling the screen back. The next keystroke
+    /// takes hold of the window again.
+    #[test]
+    fn the_wheel_scrolls_without_moving_the_cursor() {
+        let source = (0..20).map(|line| format!("line {line}")).collect::<Vec<_>>().join("\n\n");
+        let path = document("wheel", &source);
+        let mut app = app(&path);
+        let mut terminal = Terminal::new(TestBackend::new(90, 9)).expect("a test screen");
+        frame(&mut app, &mut terminal);
+
+        app.point(pointer(event::MouseEventKind::ScrollDown, 10, 4));
+        let scrolled = app.scroll;
+        assert!(scrolled > 0, "the wheel left the first screenful in place");
+        assert_eq!(app.editor.index(), 0, "the wheel moved the cursor");
+
+        frame(&mut app, &mut terminal);
+        assert_eq!(app.scroll, scrolled, "the frame pulled the window back to the caret");
+
+        app.act(Action::Move(Motion::Character(1), false));
+        frame(&mut app, &mut terminal);
+        assert_eq!(app.scroll, 0, "typing left the caret off the screen");
+        forget(&path);
+    }
+
+    /// The wheel is the window and nothing else, so it works while the writer is being
+    /// asked something; a click would move the cursor behind the question, and does not.
+    #[test]
+    fn a_question_takes_the_wheel_and_not_the_clicks() {
+        let source = (0..20).map(|line| format!("line {line}")).collect::<Vec<_>>().join("\n\n");
+        let path = document("wheel-question", &source);
+        let mut app = app(&path);
+        let mut terminal = Terminal::new(TestBackend::new(90, 9)).expect("a test screen");
+        frame(&mut app, &mut terminal);
+        app.mode = Mode::Quitting;
+
+        app.point(pointer(event::MouseEventKind::ScrollDown, 10, 4));
+        assert!(app.scroll > 0, "the wheel would not turn while the quit prompt was up");
+
+        app.point(left_click(app.column.x, 4));
+        assert_eq!(app.editor.index(), 0, "a click moved the cursor behind the quit prompt");
         forget(&path);
     }
 }

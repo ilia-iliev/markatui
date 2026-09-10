@@ -377,8 +377,14 @@ impl Editor {
     /// as the writer wrote it; a relative one is resolved against the document, which is
     /// the directory it was written relative to.
     pub fn link_at_cursor(&self) -> Option<String> {
-        let text = self.active.text();
-        let url = parse::link_at(text, byte_offset(text, self.active.cursor()))?;
+        self.link_in(self.index, self.active.cursor())
+    }
+
+    /// The link `at` characters into block `index`, which is what a click on one asks
+    /// after: the block clicked in is not always the block the cursor is in.
+    pub fn link_in(&self, index: usize, at: usize) -> Option<String> {
+        let text = self.block(index);
+        let url = parse::link_at(text, byte_offset(text, at))?;
         if url.contains("://") || url.starts_with('#') || url.starts_with("mailto:") {
             return Some(url);
         }

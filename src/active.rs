@@ -99,6 +99,23 @@ impl Active {
         self.place(self.length());
     }
 
+    /// The word `at` stands in, as the two ends of it. A position out among the spaces
+    /// takes the word that ended there; where none did — the head of a line, a run of
+    /// punctuation — the two ends are the same, which is no selection at all.
+    pub fn word(&self, at: usize) -> (usize, usize) {
+        let characters: Vec<char> = self.text.chars().collect();
+        let at = at.min(characters.len());
+        let start = characters[..at]
+            .iter()
+            .rposition(|c| !c.is_alphanumeric())
+            .map_or(0, |index| index + 1);
+        let end = characters[at..]
+            .iter()
+            .position(|c| !c.is_alphanumeric())
+            .map_or(characters.len(), |offset| at + offset);
+        (start, end)
+    }
+
     pub fn select(&mut self, from: usize, to: usize) {
         self.anchor = Some(from.min(self.length()));
         self.place(to);

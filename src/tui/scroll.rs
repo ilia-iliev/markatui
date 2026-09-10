@@ -59,7 +59,7 @@ impl App {
 
     /// The first row of `range` with text on it, scanned from the end a movement of
     /// `step` arrives at: downwards from its start, upwards from its end.
-    fn nearest(&self, range: Range<usize>, step: Step) -> Option<(usize, usize)> {
+    pub(super) fn nearest(&self, range: Range<usize>, step: Step) -> Option<(usize, usize)> {
         if step > 0 {
             range.into_iter().find_map(|row| self.document.at(row))
         } else {

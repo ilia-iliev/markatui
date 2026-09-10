@@ -61,6 +61,17 @@ impl Row {
         let nearest = self.slots.iter().min_by_key(|slot| slot.column.abs_diff(column))?;
         Some(nearest.source)
     }
+
+    /// The cell standing at `column`, where the row is drawn that far along. Nothing
+    /// past the end of it: a pointer out in the blank of a short row is on no cell, which
+    /// is what tells a click beside a link from a click on one.
+    pub fn cell_at(&self, column: u16) -> Option<&Cell> {
+        let mut past = 0;
+        self.cells.iter().find(|cell| {
+            past += cell.width;
+            past > column
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default)]
