@@ -14,11 +14,18 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::style::Color;
 use std::io::{self, Stdout, Write};
 
-/// Reporting the pointer moving with no button held, which crossterm asks for along with
-/// the rest of the mouse and which the editor does nothing with: every one of them would
-/// wake the loop and cost a frame, so it is turned back off. What is left is the buttons,
-/// the wheel, and motion while a button is down, which is a drag.
-const HOVER_OFF: &str = "\x1b[?1003l";
+/// Taking the mouse over: the buttons and the wheel, motion while a button is held, and
+/// the SGR encoding, which is the one that can carry a column past the 223rd.
+///
+/// Written out here rather than asked for with crossterm's `EnableMouseCapture`, which
+/// also turns on reporting the pointer moving with no button held. The editor does
+/// nothing with that, and every twitch of it would wake the loop and cost a frame. It
+/// cannot simply be turned back off afterwards either: a terminal that holds what it
+/// reports as one setting rather than a flag apiece — foot does, and it is not alone —
+/// reads "stop reporting motion" as "stop reporting the mouse", and the editor is left
+/// with no mouse at all. So it is never asked for, and the last thing asked for is the
+/// drag reporting that is wanted, which is what such a terminal is left holding.
+const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
 
 /// Raw mode, a screen of our own, bracketed paste, the mouse where the config leaves it
 /// on, and the kitty keyboard flags where the terminal answers for them. The panic hook
@@ -31,8 +38,8 @@ pub(super) fn start(
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, event::EnableBracketedPaste)?;
     if config::get().mouse {
-        execute!(io::stdout(), event::EnableMouseCapture)?;
-        io::stdout().write_all(HOVER_OFF.as_bytes())?;
+        io::stdout().write_all(MOUSE_ON.as_bytes())?;
+        io::stdout().flush()?;
     }
     if capabilities.keyboard == Keyboard::Kitty {
         execute!(
@@ -58,6 +65,8 @@ pub(super) fn stop(capabilities: Capabilities, background: Option<Color>) -> io:
     if let Some(command) = background_commands(background).1 {
         io::stdout().write_all(command.as_bytes())?;
     }
+    // Crossterm's own, on the way out: it turns off more than was asked for, which is the
+    // safe direction to be wrong in, and the mouse is the terminal's again either way.
     if config::get().mouse {
         execute!(io::stdout(), event::DisableMouseCapture)?;
     }
