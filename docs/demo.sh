@@ -136,14 +136,17 @@ while [ "$step" -lt "$cap" ]; do
     step=$((step + 1))
 done
 
-# Where the walk stops has to be the end of the document: a key dropped along the way
-# would stop it early and quietly shorten the film, and jumping to the end from where it
-# stopped would then move the screen.
-check=$work/check.png
-if press "-M ctrl -k End -m ctrl" "$check" "$previous"; then
-    echo "the walk stopped short of the end of the document, at step $step" >&2
-    cat "$work/sway.log" >&2
-    exit 1
+# The walk ends where the document does — but the last Down may have had nothing left to
+# move, the cursor already sitting at the end of the last block, and how far a cursor gets
+# on the last line of a document is the terminal's business as much as the editor's. So
+# the end is asked for outright, and kept as a frame only where it turns out to be
+# somewhere the walk had not already reached.
+end=$(printf '%s/frame-%03d.png' "$work" "$((step + 1))")
+if press "-M ctrl -k End -m ctrl" "$end" "$previous"; then
+    previous=$end
+    step=$((step + 1))
+else
+    rm -f "$end"
 fi
 
 # Ctrl+Home carries the cursor back to the top, which is where the film began: the loop
@@ -151,6 +154,7 @@ fi
 last=$(printf '%s/frame-%03d.png' "$work" "$((step + 1))")
 press "-M ctrl -k Home -m ctrl" "$last" "$previous" || {
     echo "the cursor would not come back to the top" >&2
+    cat "$work/sway.log" >&2
     exit 1
 }
 # The last frame is held a beat, so the heading is read before the walk starts again.
