@@ -1,10 +1,9 @@
-//! The mouse: where a click lands in the document, what a click on a link does, and
-//! which way the wheel takes the window. Nothing here knows what a block looks like —
+//! The mouse: where a click lands in the document, which links Ctrl with a click
+//! follows, and which way the wheel takes the window. Nothing here knows what a block looks like —
 //! the rows and the columns are the layout's own, the very ones the arrow keys move
 //! through, so a click lands where the caret would have.
 
 use super::{App, Mode};
-use crate::style;
 use crate::tui::open;
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::time::{Duration, Instant};
@@ -44,16 +43,16 @@ impl App {
         // is as much an answer to a notice as a keystroke is.
         self.notice.clear();
         self.follow = true;
+        if let Some(url) = self.clicked_link(event) {
+            self.editor.error = open::url(&url).err();
+            return;
+        }
         let Some((index, within, column)) = self.landing(event) else { return };
         if event.modifiers.contains(KeyModifiers::SHIFT) {
             return self.extend(index, within, column);
         }
         if self.double_clicked(event) {
             return self.select_word(index, within, column);
-        }
-        if let Some(url) = self.clicked_link(index, within, column) {
-            self.editor.error = open::url(&url).err();
-            return;
         }
         let at = self.document.rows(index)[within].source_at(column);
         self.editor.activate(index, at.unwrap_or(0));
@@ -85,20 +84,21 @@ impl App {
         Some((index, within, at))
     }
 
-    /// The link a click means to follow, if it means to follow one. Only in a block drawn
-    /// as it reads: the writer clicked the words. The click that makes a block the one
-    /// being edited shows its markdown, and every click after that in it is a click in
-    /// the source — a caret to put in the words of the link, or in its address.
-    pub(super) fn clicked_link(&self, index: usize, within: usize, column: u16) -> Option<String> {
-        if !self.reading && index == self.editor.index() {
+    /// The link Ctrl with a click means to follow, if the pointer was on one. A plain
+    /// click never opens anything: it puts the caret where it landed, which is what a
+    /// writer editing the words of a link is after, and Ctrl is how they say they meant
+    /// the link itself.
+    ///
+    /// Whether the block is drawn as it reads or opened up as markdown makes no
+    /// difference: the pointer has to be on a character of the link — its words either
+    /// way, and its address where that is on show — and never out in the blank past the
+    /// end of a row, which is what asking the row for a cell rules out.
+    pub(super) fn clicked_link(&self, event: MouseEvent) -> Option<String> {
+        if !event.modifiers.contains(KeyModifiers::CONTROL) {
             return None;
         }
-        // A drawn cell carrying the link's own colour: a pointer out in the blank past the
-        // end of a row that happens to end in a link is not on the link.
+        let (index, within, column) = self.landing(event)?;
         let cell = self.document.rows(index)[within].cell_at(column)?;
-        if cell.bits & style::LINK == 0 {
-            return None;
-        }
         self.editor.link_in(index, cell.source?)
     }
 

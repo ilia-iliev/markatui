@@ -1128,6 +1128,10 @@ mod tests {
         pointer(event::MouseEventKind::Down(event::MouseButton::Left), column, row)
     }
 
+    fn ctrl_click(column: u16, row: u16) -> event::MouseEvent {
+        event::MouseEvent { modifiers: event::KeyModifiers::CONTROL, ..left_click(column, row) }
+    }
+
     #[test]
     fn a_click_puts_the_caret_where_it_landed() {
         let path = document("click", WITH_A_LINK);
@@ -1161,42 +1165,49 @@ mod tests {
         forget(&path);
     }
 
-    /// A link is followed while the writer can see the words of it. Once the block is the
-    /// one being edited its markdown is on show, and a click in it is a click in the
-    /// source: the caret goes into the link rather than the desktop opening it.
+    /// A plain click on a link is a click in the words: the caret goes into the link,
+    /// which is where a writer who means to edit it wants it — and Ctrl+K from there
+    /// follows it, the same as ever.
     #[test]
-    fn a_click_follows_a_link_only_while_the_block_reads_as_words() {
+    fn a_plain_click_on_a_link_puts_the_caret_in_it() {
         let path = document("click-link", WITH_A_LINK);
         let mut app = app(&path);
         let mut terminal = Terminal::new(TestBackend::new(90, 12)).expect("a test screen");
         frame(&mut app, &mut terminal);
 
-        assert_eq!(app.clicked_link(1, 0, 18).as_deref(), Some("https://example.com/x"));
-        assert_eq!(app.clicked_link(1, 0, 2), None, "the words beside the link are not it");
-        assert_eq!(app.clicked_link(1, 0, 80), None, "the blank past the row is not it");
+        app.point(left_click(app.column.x + 18, 3));
 
-        app.editor.activate(1, 0);
-        frame(&mut app, &mut terminal);
-        let row = app.document.rows(1)[0].cells.len() as u16;
-        assert!(
-            (0..row).all(|column| app.clicked_link(1, 0, column).is_none()),
-            "the markdown on show was still clicked as a link"
+        assert_eq!(app.editor.index(), 1);
+        assert_eq!(
+            app.editor.link_at_cursor().as_deref(),
+            Some("https://example.com/x"),
+            "the caret did not land in the link"
         );
+        assert_eq!(app.clicked_link(left_click(app.column.x + 18, 3)), None);
         forget(&path);
     }
 
-    /// Reading mode is nothing but rendered blocks, the one holding the cursor included,
-    /// so a link in it is always a link to follow.
+    /// Ctrl with the click is how a writer says they meant the link rather than the words
+    /// of it, wherever the pointer is on it: the words of a block drawn as it reads, and
+    /// the address as well once the markdown is on show.
     #[test]
-    fn a_click_follows_a_link_in_the_active_block_in_reading_mode() {
-        let path = document("click-link-reading", WITH_A_LINK);
+    fn ctrl_and_a_click_follows_the_link_under_the_pointer() {
+        let path = document("ctrl-click-link", WITH_A_LINK);
         let mut app = app(&path);
         let mut terminal = Terminal::new(TestBackend::new(90, 12)).expect("a test screen");
-        app.editor.activate(1, 0);
-        app.set_mode("reading");
         frame(&mut app, &mut terminal);
 
-        assert_eq!(app.clicked_link(1, 0, 18).as_deref(), Some("https://example.com/x"));
+        let followed = |app: &App, column: u16| app.clicked_link(ctrl_click(column, 3));
+        assert_eq!(followed(&app, app.column.x + 18).as_deref(), Some("https://example.com/x"));
+        assert_eq!(followed(&app, app.column.x + 2), None, "the words beside the link are not it");
+        assert_eq!(followed(&app, app.column.x + 80), None, "the blank past the row is not it");
+
+        // The cursor inside the link opens that link up as markdown — "A paragraph with
+        // [a link](https://example.com/x) in it." — so column 30 is now inside the
+        // address rather than out in the words after it.
+        app.editor.activate(1, 20);
+        frame(&mut app, &mut terminal);
+        assert_eq!(followed(&app, app.column.x + 30).as_deref(), Some("https://example.com/x"));
         forget(&path);
     }
 
