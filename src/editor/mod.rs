@@ -1111,6 +1111,45 @@ mod tests {
         assert!(!editor.take_hoisted());
     }
 
+    /// Down on the last line of the document has no line and no block to go to, so it
+    /// goes to the end of the text — which is what lets Shift take the last line in.
+    #[test]
+    fn draws_the_selection_out_to_the_end_of_the_document() {
+        let mut editor = document("alpha\n\nbeta\ngamma");
+        editor.activate(1, 5);
+        editor.move_cursor(Motion::Line(1), true);
+        assert_eq!(editor.selected_text(), "gamma");
+    }
+
+    /// The same movement without a selection: the caret lands at the end of the last line
+    /// rather than staying where it was.
+    #[test]
+    fn takes_the_cursor_to_the_end_of_the_document_from_the_last_line() {
+        let mut editor = document("beta\ngamma");
+        editor.activate(0, 5);
+        editor.move_cursor(Motion::Line(1), false);
+        assert_eq!(editor.active().cursor(), 10);
+    }
+
+    /// And the other end reads the same way: up from the first line goes to the start.
+    #[test]
+    fn draws_the_selection_back_to_the_start_of_the_document() {
+        let mut editor = document("alpha\nbeta\n\ngamma");
+        editor.activate(0, 3);
+        editor.move_cursor(Motion::Line(-1), true);
+        assert_eq!(editor.selected_text(), "alp");
+    }
+
+    /// Only the first and last lines do this. A line with one above and below it moves by
+    /// a line, keeping to the column it is aiming for.
+    #[test]
+    fn keeps_to_the_column_on_a_line_with_one_below_it() {
+        let mut editor = document("alpha\nbeta\ngamma");
+        editor.activate(0, 3);
+        editor.move_cursor(Motion::Line(1), true);
+        assert_eq!(editor.selected_text(), "ha\nbet");
+    }
+
     #[test]
     fn carries_a_selection_across_blocks_and_reads_it_with_its_gaps() {
         let mut editor = document("alpha\n\nbeta\n\ngamma");

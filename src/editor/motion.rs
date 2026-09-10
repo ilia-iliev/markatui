@@ -62,9 +62,13 @@ impl Editor {
     }
 
     /// Move into the neighbouring block, keeping to the edge the cursor comes in by, so
-    /// that one press of an arrow takes in one line rather than a whole block.
+    /// that one press of an arrow takes in one line rather than a whole block. At the ends
+    /// of the document there is no such block, and the movement stops at the end of the
+    /// text instead of nowhere — so the last line can be taken in like any other.
     fn leave(&mut self, step: Step, extend: bool) {
-        let Some(target) = self.neighbour(step) else { return };
+        let Some(target) = self.neighbour(step) else {
+            return self.active.to_block_edge(step);
+        };
         self.go_to(target, extend);
         self.active.to_block_edge(-step);
     }
