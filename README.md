@@ -52,7 +52,8 @@ puts it in `~/.local/bin`, and registers its desktop entry:
 ```
 
 Set `PREFIX` to choose another installation root. The script asks before installing or
-replacing the command and before making markatui the default Markdown application.
+replacing the command and before making markatui the default Markdown application. Pass
+`-y` to accept both questions without prompting.
 
 For a command-line-only installation, use Cargo directly:
 

@@ -34,6 +34,7 @@ chmod +x "$tmp/bin/rustup" "$tmp/bin/cargo" "$tmp/bin/xdg-mime"
 run_installer() {
     input=$1
     output=$2
+    shift 2
     set +e
     printf '%b' "$input" | env \
         HOME="$tmp/home" \
@@ -42,7 +43,7 @@ run_installer() {
         XDG_DATA_HOME="$tmp/data" \
         XDG_MIME_LOG="$tmp/xdg-mime.log" \
         PATH="$tmp/bin:/usr/bin:/bin" \
-        "$repo/packaging/install.sh" > "$output" 2>&1
+        "$repo/packaging/install.sh" "$@" > "$output" 2>&1
     status=$?
     set -e
 }
@@ -92,6 +93,19 @@ run_installer 'y\ny\n' "$tmp/update.out"
 assert_contains "$tmp/update.out" "Use markatui as the default application for .md files?"
 grep -Fx "default markatui.desktop text/markdown" "$tmp/xdg-mime.log" >/dev/null ||
     fail "Markdown default was not set"
+
+# -y accepts the installation and default-application questions without prompting.
+: > "$tmp/xdg-mime.log"
+INSTALL_PREFIX="$tmp/unattended prefix"
+export INSTALL_PREFIX
+run_installer '' "$tmp/unattended.out" -y
+[ "$status" -eq 0 ] || fail "unattended installation failed"
+[ -x "$INSTALL_PREFIX/bin/markatui" ] || fail "unattended installation missed the binary"
+if grep -F "[y/N]" "$tmp/unattended.out" >/dev/null; then
+    fail "unattended installation prompted"
+fi
+grep -Fx "default markatui.desktop text/markdown" "$tmp/xdg-mime.log" >/dev/null ||
+    fail "unattended installation did not set the Markdown default"
 
 # Register a changed, safely quoted command even when markatui is already the default.
 : > "$tmp/xdg-mime.log"

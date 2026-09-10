@@ -3,6 +3,17 @@
 # musl binary when the matching Rust target is available; otherwise use the native target.
 set -eu
 
+assume_yes=false
+case ${1-} in
+    -y) assume_yes=true; shift ;;
+    '') ;;
+    *) echo "Usage: $0 [-y]" >&2; exit 2 ;;
+esac
+if [ "$#" -ne 0 ]; then
+    echo "Usage: $0 [-y]" >&2
+    exit 2
+fi
+
 cd "$(dirname "$0")/.."
 
 if [ "$(uname -s)" != Linux ]; then
@@ -15,6 +26,9 @@ destination="$prefix/bin/markatui"
 target="$(uname -m)-unknown-linux-musl"
 
 confirm() {
+    if [ "$assume_yes" = true ]; then
+        return 0
+    fi
     printf '%s [y/N] ' "$1"
     read -r answer || return 1
     case "$answer" in
