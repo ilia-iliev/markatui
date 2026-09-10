@@ -11,6 +11,8 @@ fn main() {
 }
 ```
 
-> Writing is thinking. To write well is to think clearly.
+> Say less, then say it plainly
+
+Spellin is checked as you write, and a suggestion waits under the cursor.
 
 ![A picture](image.png)

@@ -4,7 +4,7 @@ A Markdown editor for the terminal. Markdown is rendered whilst typing. Keyboard
 
 Mostly WYSIWYG - the block under the cursor is shown as raw Markdown in some cases. Renders images if the terminal supports it.
 
-![The cursor walking down the sample document in markatui: each block shows its raw Markdown as the cursor arrives and renders again as it leaves, the picture is drawn by the terminal, and the checker's suggestion is at the foot of the screen](docs/demo.gif)
+![markatui started from a terminal and the cursor walking down the sample document: each block shows its raw Markdown as the cursor arrives and renders again as it leaves, the checker names a misspelt word at the foot of the screen and the letter it is missing is typed in, and the picture is drawn by the terminal](docs/demo.gif)
 
 This is based off [blogawrite](https://github.com/ilia-iliev/blogawrite) - similar concept, but a standalone editor.
 
