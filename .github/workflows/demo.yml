@@ -28,12 +28,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            sway foot grim wtype jq ffmpeg fonts-dejavu-core
+            sway foot grim wtype jq ffmpeg fonts-dejavu-core xkb-data
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Film it
         run: ./docs/demo.sh
+        env:
+          KEEP_FRAMES: ${{ runner.temp }}/frames
+
+      # A film made where nobody can watch it is otherwise impossible to argue with.
+      - name: Keep what it saw if it went wrong
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frames
+          path: ${{ runner.temp }}/frames
 
       - name: Commit it if it changed
         run: |

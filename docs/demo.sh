@@ -26,11 +26,18 @@ cargo build --release
 work=$(mktemp -d)
 chmod 700 "$work"
 sway=
+# Where the frames and the compositor's log are left when something goes wrong. A film
+# made somewhere nobody can watch it — CI — is otherwise impossible to argue with.
+keep=${KEEP_FRAMES:-}
 # The compositor started here is the only one spoken to: an inherited SWAYSOCK would
 # address the one the writer is sitting in, and telling that to exit logs them out.
 cleanup() {
     [ -n "$sway" ] && kill "$sway" 2>/dev/null
     wait 2>/dev/null || true
+    if [ -n "$keep" ]; then
+        mkdir -p "$keep"
+        cp "$work"/frame-*.png "$work"/sway.log "$keep/" 2>/dev/null || true
+    fi
     rm -rf "$work"
 }
 trap cleanup EXIT
@@ -132,7 +139,8 @@ done
 # stopped would then move the screen.
 check=$work/check.png
 if press "-M ctrl -k End -m ctrl" "$check" "$previous"; then
-    echo "the walk stopped short of the end of the document" >&2
+    echo "the walk stopped short of the end of the document, at step $step" >&2
+    cat "$work/sway.log" >&2
     exit 1
 fi
 
