@@ -1,0 +1,46 @@
+# The film in the README is made by the editor itself, so it can never be out of date.
+# Every push that could change what the editor draws makes a fresh one and commits it.
+name: Demo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'sample/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'docs/demo.sh'
+      - '.github/workflows/demo.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A compositor, a terminal, a keyboard, a shutter, and a font to draw with.
+      - name: Install the terminal
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            sway foot grim wtype jq ffmpeg fonts-dejavu-core
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Film it
+        run: ./docs/demo.sh
+
+      - name: Commit it if it changed
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add docs/demo.gif
+          # Nothing to say when the editor draws what it drew last time.
+          git diff --cached --quiet && exit 0
+          git commit -m 'Refilm the demo [skip ci]'
+          git push

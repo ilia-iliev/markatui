@@ -4,7 +4,7 @@ A Markdown editor for the terminal. Markdown is rendered whilst typing. Keyboard
 
 Mostly WYSIWYG - the block under the cursor is shown as raw Markdown in some cases. Renders images if the terminal supports it.
 
-![The sample document in markatui: the heading under the cursor shows its hash, every other block is rendered, the picture is drawn as sixel, and the checker's suggestion is at the foot of the screen](docs/screenshot.png)
+![The cursor walking down the sample document in markatui: each block shows its raw Markdown as the cursor arrives and renders again as it leaves, the picture is drawn by the terminal, and the checker's suggestion is at the foot of the screen](docs/demo.gif)
 
 This is based off [blogawrite](https://github.com/ilia-iliev/blogawrite) - similar concept, but a standalone editor.
 
@@ -22,15 +22,7 @@ Copy/paste uses the machine's clipboard.
 
 ## Mouse
 
-Click to put the caret where you clicked, links included - clicking one is how you get the
-caret into it to edit it. Ctrl+click follows a link instead, the same as Ctrl+K does from
-the caret. Double-click selects a word, dragging selects a range across as many blocks as
-you drag over, and the wheel scrolls without dragging the cursor along - the next
-keystroke brings the window back to it.
-
-A terminal that has handed the mouse over stops drawing its own selection with a plain
-drag; most keep Shift+drag for it. `mouse = false` in the config gives the mouse back to
-the terminal.
+Markatui supports clicking and dragging with the mouse. I'm primarily a keyboard user, so there could be rough edges. 
 
 ## Config
 
@@ -39,7 +31,7 @@ the terminal.
 ```sh
 markatui theme light
 markatui theme dark
-markatui theme terminal  # inherit the terminal's background and text colour
+markatui theme terminal  # inherit the terminal
 ```
 
 The choice is written to the config file. `markatui -config` opens that file in the editor; what it says is read at the next start, and `markatui -config default` resets to default.
@@ -51,8 +43,11 @@ American-English spelling and style checking are built in through Harper, with a
 To turn off types of checks, use `alt+g`
 
 ## Terminals
+I use foot and I have verified markatui works on alacritty and kitty.
 
-Written against foot; Alacritty and kitty could work too. Pictures and the shifted keys are what a terminal has to answer for.
+## Images
+
+Images are rendered if the terminal allows it. Otherwise, a dummy box is used. Images can also be pasted from clipboard - this will create an image file and the document will reference it. 
 
 ## Install from source (Linux)
 
@@ -62,18 +57,6 @@ puts it in `~/.local/bin`, and registers its desktop entry:
 ```sh
 ./packaging/install.sh
 ```
-
-Set `PREFIX` to choose another installation root. The script asks before installing or
-replacing the command and before making markatui the default Markdown application. Pass
-`-y` to accept both questions without prompting.
-
-For a command-line-only installation, use Cargo directly:
-
-```sh
-cargo install --path . --locked
-```
-
-Prebuilt release binaries and distribution packages are not currently provided.
 
 ## License
 

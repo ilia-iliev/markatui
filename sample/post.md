@@ -1,18 +1,9 @@
 # markatui
 
-A live-preview Markdown editor. The block under the cursor shows its **raw source**; every other block stays rendered, so the file on disk is exactly what you typed.
+A live-preview Markdown editor. The block under the cursor shows its **raw source**; every other block stays rendered.
 
-## Lists
-
-- First item
-- Second item
-  - Nested item
-- Third item
-
-1. First
-2. Second
-
-## Code
+- Lists, `code`, [links](https://example.com) and *emphasis*
+- Pictures, drawn by the terminal
 
 ```rust
 fn main() {
@@ -20,19 +11,6 @@ fn main() {
 }
 ```
 
-## Quote
-
-> Writing is thinking. To write well is to think clearly. That's why it's so hard.
-
-## Table
-
-| Block | Renders as |
-| --- | --- |
-| heading | large text |
-| code | monospace |
-
----
-
-Inline `code`, a [link](https://example.com), *emphasis* and ~~strikethrough~~.
+> Writing is thinking. To write well is to think clearly.
 
 ![A picture](image.png)
