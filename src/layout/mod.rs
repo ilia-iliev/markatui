@@ -481,6 +481,7 @@ mod tests {
             | style::MARKER
             | style::HIDDEN
             | style::HEADING
+            | style::UNDERLINE
             | style::UNCHECKED
             | style::LINT;
         assert_eq!(FILL & used, 0);

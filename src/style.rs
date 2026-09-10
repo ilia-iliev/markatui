@@ -22,6 +22,8 @@ pub const MARKER: u16 = 32;
 pub const HIDDEN: u16 = 64;
 /// A heading's words, whatever else they are.
 pub const HEADING: u16 = 128;
+/// Words inside `<u></u>`, which is the only underline markdown has.
+pub const UNDERLINE: u16 = 256;
 /// Not prose — code, a link, an address. The checker's marks keep off it.
 pub const UNCHECKED: u16 = 16384;
 /// Something the checker took exception to. Added by the editor, not by the parser.
@@ -59,6 +61,7 @@ pub fn mask(text: &str, cursor: Cursor) -> Vec<u16> {
     let mut bytes = vec![0u16; text.len()];
     let cursor = cursor.map(|at| byte_offset(text, at));
     mark_prose(text, cursor, &mut bytes);
+    mark_underlines(text, cursor, &mut bytes);
     text.char_indices().map(|(offset, _)| bytes[offset]).collect()
 }
 
@@ -75,6 +78,27 @@ fn marker_bits(cursor: Option<usize>, span: &Range<usize>) -> u16 {
     match cursor {
         Some(at) if span.contains(&at) || at == span.end => MARKER,
         _ => HIDDEN,
+    }
+}
+
+/// The tags of the one style markdown has no marker for. `<u>` and `</u>` arrive as two
+/// inline HTML events with the words between them belonging to neither, so the pair is
+/// found in the source instead: there is nothing in the parser's tree to hang it on.
+fn mark_underlines(text: &str, cursor: Option<usize>, bytes: &mut [u16]) {
+    const OPEN: &str = "<u>";
+    const CLOSE: &str = "</u>";
+    let mut from = 0;
+    while let Some(open) = text[from..].find(OPEN).map(|at| from + at) {
+        let words = open + OPEN.len();
+        let Some(close) = text[words..].find(CLOSE).map(|at| words + at) else { return };
+        let span = open..close + CLOSE.len();
+        mark(bytes, span.clone(), UNDERLINE);
+        // The tags themselves go the way every other marker does: legible while the
+        // cursor is inside them, gone once it leaves, and never spelled at.
+        let bits = marker_bits(cursor, &span) | UNCHECKED;
+        mark(bytes, open..words, bits);
+        mark(bytes, close..span.end, bits);
+        from = span.end;
     }
 }
 
@@ -188,6 +212,18 @@ impl Prefix {
     fn empty() -> Self {
         Prefix { len: 0, quote: 0, indent: 0, marker: Marker::None }
     }
+
+    /// How much of `len` is the marker itself rather than the indent and quotes in front
+    /// of it. What is left is what a formatting key keeps when it swaps one marker for
+    /// another.
+    pub fn marker_len(&self) -> usize {
+        match &self.marker {
+            Marker::Heading(level) => level + 1,
+            Marker::Bullet => 2,
+            Marker::Numbered(number) => length(number) + 1,
+            Marker::None | Marker::Fence | Marker::Whole => 0,
+        }
+    }
 }
 
 /// What of `line` is structure, given the kind of block it belongs to and whether it is
@@ -231,13 +267,9 @@ fn within(line: &str, kind: Kind) -> Prefix {
         return Prefix { len: taken, quote, indent, marker: Marker::None };
     };
 
-    let marker_len = match &marker {
-        Marker::Heading(level) => level + 1,
-        Marker::Bullet => 2,
-        Marker::Numbered(number) => length(number) + 1,
-        _ => 0,
-    };
-    Prefix { len: taken + indent + marker_len, quote, indent, marker }
+    let mut prefix = Prefix { len: taken + indent, quote, indent, marker };
+    prefix.len += prefix.marker_len();
+    prefix
 }
 
 /// How deep the line's quote markers run, and what is left of the line beneath them.
@@ -298,6 +330,7 @@ mod tests {
                 _ if bits & BOLD != 0 => 'b',
                 _ if bits & ITALIC != 0 => 'i',
                 _ if bits & STRIKE != 0 => 's',
+                _ if bits & UNDERLINE != 0 => 'u',
                 _ if bits & HEADING != 0 => 'H',
                 _ => '.',
             })
@@ -326,6 +359,15 @@ mod tests {
         assert_eq!(picture("`x y`", -1), "hccch");
         assert_eq!(picture("`x y`", 2), "mcccm");
         assert!(mask("`x`", None).iter().all(|bits| bits & UNCHECKED != 0));
+    }
+
+    /// Markdown has no underline, so the one style that is written as HTML is drawn the
+    /// same way every marker is: the tags go once the cursor leaves them.
+    #[test]
+    fn underlines_what_is_between_the_tags() {
+        assert_eq!(picture("a <u>x</u> b", -1), "..hhhuhhhh..");
+        assert_eq!(picture("a <u>x</u> b", 5), "..mmmummmm..");
+        assert!(mask("<u>x</u>", None).iter().take(3).all(|bits| bits & UNCHECKED != 0));
     }
 
     #[test]
@@ -361,6 +403,7 @@ mod tests {
             "go [home](https://example.com) now",
             "**a *b* c** d",
             "~~gone~~",
+            "an <u>underlined</u> word",
         ] {
             for cursor in 0..=text.chars().count() {
                 let bits = mask(text, Some(cursor));

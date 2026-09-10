@@ -5,6 +5,7 @@ const HELP: &str = "Usage:
   markatui <file.md>
   markatui -keymap
   markatui -keymap <command> <key>
+  markatui -keymap default
   markatui -checks
   markatui -checks on|off <check>
   markatui theme light|dark|terminal
@@ -13,7 +14,7 @@ const HELP: &str = "Usage:
 
 Available options:
   -h, --help  Print help
-  -keymap     List the keys, or bind one to a command
+  -keymap     List the keys, bind one to a command, or put them all back
   -checks     List the writing checks, or turn one on or off
   -theme      Set light, dark, or terminal colours
   -config     Edit the config file, or put it back to its defaults";
@@ -92,9 +93,14 @@ fn theme(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
     }
 }
 
+/// The keys, with `default` putting back the ones that shipped — said out loud, since
+/// nothing else is overwriting a file the writer has edited.
 fn keymap(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
     match (arguments.next(), arguments.next(), arguments.next()) {
         (None, None, None) => tui::config::keymap::show().map(|text| println!("{text}")),
+        (Some(word), None, None) if word == "default" => {
+            tui::config::keymap::reset().map(|path| println!("reset {}", path.display()))
+        }
         (Some(command), Some(key), None) => tui::config::keymap::set(&command, &key),
         _ => usage(),
     }

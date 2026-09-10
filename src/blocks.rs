@@ -87,7 +87,7 @@ pub fn replacement(source: &str) -> (Vec<String>, Vec<String>) {
 
 /// What goes between two blocks broken apart: a blank line, which is what a paragraph
 /// ends with wherever the writer has not said otherwise.
-const PARAGRAPH: &str = "\n\n";
+pub const PARAGRAPH: &str = "\n\n";
 
 /// Every picture the writer left among the words of a paragraph broken out into a
 /// paragraph of its own, blocks and the separators between them together. `false` where

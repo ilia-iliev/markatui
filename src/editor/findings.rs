@@ -6,6 +6,8 @@ use super::Editor;
 use crate::active::{Active, Step};
 use crate::lint;
 use crate::search;
+use crate::text::byte_offset;
+use std::sync::Arc;
 
 #[derive(Default)]
 pub struct LintState {
@@ -30,11 +32,23 @@ impl LintState {
     }
 }
 
+/// Which half of the search bar the writer is typing into. Tab moves between them.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    #[default]
+    Needle,
+    Replacement,
+}
+
 /// What the search is looking at, as the foot of the screen needs to read it.
 #[derive(Default)]
 pub struct SearchState {
     pub open: bool,
     pub needle: String,
+    /// What the writer is putting in place of the word, which stays between searches:
+    /// the same swap is usually wanted more than once.
+    pub replacement: String,
+    pub field: Field,
     pub count: usize,
     /// Which occurrence is on show, or nowhere when the word is not in the document.
     pub choice: Option<usize>,
@@ -140,6 +154,75 @@ impl Editor {
         self.search.count = 0;
         self.search.choice = None;
         self.search.alone = false;
+        self.search.field = Field::Needle;
+    }
+
+    /// Swap the two halves of the bar. Both keep what was typed into them.
+    pub fn switch_field(&mut self) {
+        self.search.field = match self.search.field {
+            Field::Needle => Field::Replacement,
+            Field::Replacement => Field::Needle,
+        };
+    }
+
+    /// What the writer is typing into now, to be handed back changed.
+    pub fn field(&self) -> &str {
+        match self.search.field {
+            Field::Needle => &self.search.needle,
+            Field::Replacement => &self.search.replacement,
+        }
+    }
+
+    /// Take what was typed into the half of the bar the writer is in. Only the word being
+    /// looked for sends the search off again; the replacement is not looked for.
+    pub fn type_into_field(&mut self, text: &str) {
+        match self.search.field {
+            Field::Needle => self.search_for(text),
+            Field::Replacement => self.search.replacement = text.to_string(),
+        }
+    }
+
+    /// Put the replacement over the occurrence on show and walk to the next one. The
+    /// document has moved underneath the search, so it looks again before it walks.
+    pub fn replace_found(&mut self) {
+        if self.search.choice.is_none() {
+            return;
+        }
+        let replacement = self.search.replacement.clone();
+        self.active.insert(&replacement);
+        self.record_edit();
+        self.look_again();
+    }
+
+    /// Every occurrence of the word swapped for the replacement, in one edit. Worked out
+    /// over the blocks as they stand and applied from the back of each, so that the
+    /// offsets ahead of a swap are still the offsets the search found.
+    pub fn replace_all(&mut self) {
+        self.store_active();
+        let found = search::occurrences(&self.blocks, &self.search.needle);
+        if found.is_empty() {
+            return;
+        }
+        for occurrence in found.iter().rev() {
+            let block = Arc::make_mut(&mut self.blocks[occurrence.block]);
+            let range = byte_offset(block, occurrence.at)..byte_offset(block, occurrence.end);
+            block.replace_range(range, &self.search.replacement);
+        }
+        self.index = self.index.min(self.blocks.len() - 1);
+        self.active = Active::new(&self.blocks[self.index], self.active.cursor());
+        self.anchor = None;
+        self.record_edit();
+        self.look_again();
+    }
+
+    /// Look for the word again over the document as it now stands, and put the first
+    /// occurrence still in it under the cursor.
+    fn look_again(&mut self) {
+        self.store_active();
+        let needle = self.search.needle.clone();
+        let found = self.search.found.look_for(&self.blocks, &needle);
+        self.search.alone = false;
+        self.show_occurrence(found);
     }
 
     pub fn search_for(&mut self, needle: &str) {

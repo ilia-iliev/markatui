@@ -3,6 +3,7 @@
 //! markdown it was typed as instead.
 
 use super::{Layout, Row, glyph, padding};
+use crate::marks;
 use crate::style;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -14,17 +15,12 @@ use unicode_width::UnicodeWidthStr;
 /// A table wider than the column runs over rather than being mangled to fit: that it does
 /// not fit is the useful thing for the writer to see.
 pub(super) fn table(text: &str) -> Layout {
+    // The row of dashes says how the columns read, not what is in them, and a terminal
+    // draws every cell the same way: it is dropped rather than drawn.
     let rows: Vec<Vec<String>> = text
         .lines()
-        .map(|line| {
-            line.trim()
-                .trim_start_matches('|')
-                .trim_end_matches('|')
-                .split('|')
-                .map(|column| column.trim().to_string())
-                .collect()
-        })
-        .filter(|columns: &Vec<String>| !divider(columns))
+        .filter(|line| !marks::divider(line))
+        .map(|line| marks::split_row(line).iter().map(|cell| cell.to_string()).collect())
         .collect();
     let Some(columns) = rows.iter().map(Vec::len).max() else {
         return Layout::default();
@@ -48,13 +44,6 @@ pub(super) fn table(text: &str) -> Layout {
     }
     drawn.push(border(&widths, "└", "┴", "┘"));
     Layout { rows: drawn, caret: None }
-}
-
-fn divider(columns: &[String]) -> bool {
-    !columns.is_empty()
-        && columns
-            .iter()
-            .all(|column| !column.is_empty() && column.chars().all(|c| c == '-' || c == ':'))
 }
 
 fn border(widths: &[u16], left: &str, join: &str, right: &str) -> Row {

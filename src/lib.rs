@@ -3,9 +3,9 @@
 //!
 //! Three layers, and the line between them is where a terminal starts mattering:
 //!
-//! - the core — [`blocks`], [`parse`], [`search`], [`spell`], [`lint`], [`state`],
-//!   [`storage`], [`text`], [`style`], [`active`], [`editor`], [`layout`] — knows nothing
-//!   about terminals and is tested without one;
+//! - the core — [`blocks`], [`parse`], [`marks`], [`search`], [`spell`], [`lint`],
+//!   [`state`], [`storage`], [`text`], [`style`], [`active`], [`editor`], [`layout`] —
+//!   knows nothing about terminals and is tested without one;
 //! - [`tui`] draws and reads keys through any terminal;
 //! - [`tui::probe`] is the only place that asks what this one can do.
 
@@ -14,6 +14,7 @@ pub mod blocks;
 pub mod editor;
 pub mod layout;
 pub mod lint;
+pub mod marks;
 pub mod parse;
 pub mod search;
 pub mod spell;

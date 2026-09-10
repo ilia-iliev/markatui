@@ -63,7 +63,7 @@ impl Search {
 
 /// Every occurrence of `needle`, in document order, ignoring case. Occurrences do not
 /// overlap: `aa` turns up twice in `aaaa`, not three times.
-fn occurrences(blocks: &[Arc<String>], needle: &str) -> Vec<Occurrence> {
+pub fn occurrences(blocks: &[Arc<String>], needle: &str) -> Vec<Occurrence> {
     if needle.is_empty() {
         return Vec::new();
     }

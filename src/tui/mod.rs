@@ -6,6 +6,7 @@ pub mod clipboard;
 pub mod config;
 pub mod images;
 pub mod keys;
+pub mod open;
 pub mod probe;
 mod scroll;
 mod status;
@@ -14,7 +15,7 @@ pub mod theme;
 pub mod view;
 
 use crate::active::Step;
-use crate::editor::Editor;
+use crate::editor::{Editor, Field};
 use crate::lint;
 use crate::state;
 use crate::storage;
@@ -243,9 +244,19 @@ impl App {
             Action::Type(text) => self.edit(|editor| editor.insert(&text)),
             Action::Delete(step) => self.edit(|editor| editor.delete(step)),
             Action::Enter => self.edit(Editor::enter),
+            Action::Tab => self.edit(|editor| editor.insert("\t")),
             Action::Surround(marker) => self.edit(|editor| editor.surround(marker)),
+            Action::Tag(tag) => self.edit(|editor| editor.wrap(tag)),
             Action::Link(prefix) => self.edit(|editor| editor.insert_link(prefix)),
+            Action::OpenOrLink => self.open_or_link(),
+            Action::Mark(mark) => self.edit(|editor| editor.mark(mark)),
+            Action::Fence => self.edit(Editor::fence),
+            Action::Rule => self.edit(Editor::insert_rule),
+            Action::Table => self.edit(Editor::insert_table),
+            Action::Align(align) => self.edit(|editor| editor.align(align)),
+            Action::Cut => self.cut(),
             Action::Undo => self.edit(Editor::undo),
+            Action::Redo => self.edit(Editor::redo),
             Action::AcceptLint if self.grammar => self.edit(Editor::accept_lint),
             Action::Learn if self.grammar => self.editor.learn(),
             Action::MuteCheck if self.grammar => self.ask_to_mute(),
@@ -281,21 +292,28 @@ impl App {
     }
 
     fn act_searching(&mut self, action: Action) {
-        let mut needle = self.editor.search.needle.clone();
+        let mut typed = self.editor.field().to_string();
         match action {
-            Action::Type(text) => needle.push_str(&text),
+            Action::Type(text) => typed.push_str(&text),
             Action::Delete(_) => {
-                needle.pop();
+                typed.pop();
             }
+            Action::Tab => return self.editor.switch_field(),
             Action::CycleSearch(step) => return self.editor.cycle_search(step),
-            Action::CloseSearch => {
+            // Enter in the half holding the word says it is typed; in the half holding
+            // the replacement it is the swap being asked for.
+            Action::Enter if self.editor.search.field == Field::Replacement => {
+                return self.edit(Editor::replace_found);
+            }
+            Action::ReplaceAll => return self.edit(Editor::replace_all),
+            Action::Enter | Action::CloseSearch => {
                 self.editor.close_search();
                 self.mode = Mode::Editing;
                 return;
             }
             _ => return,
         }
-        self.editor.search_for(&needle);
+        self.editor.type_into_field(&typed);
     }
 
     fn act_quitting(&mut self, action: Action) {
@@ -359,6 +377,25 @@ impl App {
             }
             Err(problem) => self.editor.error = Some(problem),
         }
+    }
+
+    /// Ctrl+K, which is both things a writer does with a link: standing in one, it is
+    /// followed; standing anywhere else, one is started.
+    fn open_or_link(&mut self) {
+        let Some(url) = self.editor.link_at_cursor() else {
+            return self.edit(|editor| editor.insert_link(""));
+        };
+        self.editor.error = open::url(&url).err();
+    }
+
+    /// Copy and delete in one, which is what every editor means by cut. A cursor with
+    /// nothing selected has nothing to cut, and the key does nothing.
+    fn cut(&mut self) {
+        if self.editor.selection().is_none() {
+            return;
+        }
+        self.copy();
+        self.edit(|editor| editor.delete(1));
     }
 
     fn copy(&mut self) {
@@ -538,6 +575,29 @@ mod tests {
         forget(&path);
     }
 
+    #[test]
+    fn page_keys_scroll_from_an_image_in_reading_mode() {
+        let source = format!(
+            "![A picture](image.png)\n\n{}",
+            (0..20).map(|line| format!("line {line}")).collect::<Vec<_>>().join("\n\n")
+        );
+        let path = document("image-pages", &source);
+        let mut app = app(&path);
+        app.set_mode("reading");
+        let mut terminal = Terminal::new(TestBackend::new(90, 9)).expect("a test screen");
+        until_the_picture_lands(&mut app, &mut terminal);
+        assert_eq!(app.document.caret(), None);
+
+        app.page(1);
+        frame(&mut app, &mut terminal);
+        assert!(app.scroll > 0, "PageDown left the image in place");
+
+        app.page(-1);
+        frame(&mut app, &mut terminal);
+        assert_eq!(app.scroll, 0, "PageUp left the image scrolled");
+        forget(&path);
+    }
+
     /// A picture drawn on the very last row of the terminal makes a sixel terminal scroll,
     /// and the row that goes off the top never comes back. The foot of the screen is a
     /// band whether or not it has anything to say, so nothing of the document — least of
@@ -635,6 +695,53 @@ mod tests {
 
     /// The one paste key takes whatever the clipboard was holding. Words are typed in
     /// where the cursor is, the same as a terminal's own paste.
+    /// The bar is two halves and Tab is what moves between them: what is typed goes into
+    /// the half the writer is in, and only the word being looked for is looked for.
+    #[test]
+    fn types_into_the_half_of_the_search_bar_the_writer_is_in() {
+        let path = document("swap", "a cat and a cat");
+        let mut app = app(&path);
+        app.act(Action::OpenSearch);
+        for letter in "cat".chars() {
+            app.act(Action::Type(letter.to_string()));
+        }
+        assert_eq!(app.editor.search.count, 2);
+
+        app.act(Action::Tab);
+        for letter in "dog".chars() {
+            app.act(Action::Type(letter.to_string()));
+        }
+        assert_eq!(app.editor.search.needle, "cat");
+        assert_eq!(app.editor.search.replacement, "dog");
+
+        // Enter in this half is the swap, not the way out of the bar.
+        app.act(Action::Enter);
+        assert_eq!(app.editor.block(0), "a dog and a cat");
+        assert!(app.mode == Mode::Searching, "Enter closed the bar instead of swapping");
+        app.act(Action::ReplaceAll);
+        assert_eq!(app.editor.block(0), "a dog and a dog");
+
+        app.act(Action::Tab);
+        app.act(Action::Enter);
+        assert!(app.mode == Mode::Editing, "Enter left the bar open");
+        forget(&path);
+    }
+
+    /// Cut is copy and delete in one. With nothing selected there is nothing to cut, and
+    /// the key leaves the document where it was rather than eating a character.
+    #[test]
+    fn cuts_only_what_is_selected() {
+        let path = document("cut", "one two");
+        let mut app = app(&path);
+        app.act(Action::Cut);
+        assert_eq!(app.editor.block(0), "one two");
+
+        app.act(Action::Move(crate::editor::Motion::Word(1), true));
+        app.act(Action::Cut);
+        assert_eq!(app.editor.block(0), " two");
+        forget(&path);
+    }
+
     #[test]
     fn pastes_the_words_on_the_clipboard() {
         let path = document("paste-words", "A document.");

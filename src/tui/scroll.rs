@@ -33,9 +33,10 @@ impl App {
     /// together, so the next screenful replaces this one rather than merely bringing its
     /// first block into view.
     pub(super) fn page(&mut self, step: Step) {
-        let Some((row, column)) = self.document.caret() else {
-            return;
-        };
+        // Rendered images and tables deliberately have no caret mapping. Their first row
+        // still anchors a page movement, so reading mode can page away from them.
+        let (row, column) =
+            self.document.caret().unwrap_or_else(|| (self.document.top(self.editor.index()), 0));
         let height = self.document.height();
         let target = row
             .saturating_add_signed(step as isize * self.viewport as isize)

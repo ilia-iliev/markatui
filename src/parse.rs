@@ -124,6 +124,20 @@ pub fn kind(block: &str) -> Kind {
     }
 }
 
+/// Where the link standing at byte offset `at` points, if one does. The whole of a link
+/// counts, brackets and address alike: a writer following a link is on it wherever they
+/// can see it.
+pub fn link_at(block: &str, at: usize) -> Option<String> {
+    use pulldown_cmark::Tag;
+
+    Parser::new_ext(block, options()).into_offset_iter().find_map(|(event, range)| match event {
+        Event::Start(Tag::Link { dest_url, .. }) if range.contains(&at) || range.end == at => {
+            Some(dest_url.to_string())
+        }
+        _ => None,
+    })
+}
+
 /// The image path of a block that is a lone `![alt](path)` paragraph, if any.
 pub fn lone_image(block: &str) -> Option<String> {
     use pulldown_cmark::{Tag, TagEnd};

@@ -2,6 +2,9 @@
 //! back through them puts back. Every edit makes a state; a run of typing or of repeated
 //! deletion adds to the newest one rather than making its own, so one undo takes back the
 //! word rather than the letter.
+//!
+//! What an undo took back is kept, so that a redo can put it forward again. A fresh edit
+//! throws that away: the writer has said what happens next, and it is not what used to.
 
 use super::{EditRun, Editor};
 use crate::active::Active;
@@ -61,6 +64,7 @@ impl Editor {
     }
 
     fn push_undo(&mut self) {
+        self.redo.clear();
         self.store_active();
         self.revision += 1;
         self.settled = false;
@@ -93,8 +97,22 @@ impl Editor {
         if self.undo.len() < 2 {
             return;
         }
-        self.undo.pop_back();
+        let undone = self.undo.pop_back().expect("a history that is two deep has a newest");
+        self.redo.push(undone);
         let state = self.undo.back().expect("a history has an opening state").clone();
+        self.restore(state);
+    }
+
+    /// Put back what the last undo took. Only ever the states undo itself set aside, and
+    /// only until the writer types something else.
+    pub fn redo(&mut self) {
+        self.edit_run = None;
+        let Some(state) = self.redo.pop() else { return };
+        self.undo.push_back(state.clone());
+        self.restore(state);
+    }
+
+    fn restore(&mut self, state: Undo) {
         self.blocks = state.blocks;
         self.gaps = state.gaps;
         self.index = state.index.min(self.blocks.len() - 1);

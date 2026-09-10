@@ -8,12 +8,15 @@
 //! Ctrl+D, which always leave: a writer who cannot find the way out of an editor is stuck
 //! in it, and no config should be able to arrange that.
 //!
-//! Where the kitty protocol is not answered, Ctrl+I arrives as Tab and Ctrl+Enter as
-//! Enter, and italics and accepting a suggestion are lost with them; the probe says which
-//! terminal is which.
+//! The bindings assume the kitty keyboard protocol, which foot, Alacritty and kitty all
+//! answer: it is what tells Ctrl+I from Tab, Ctrl+Enter from Enter, Ctrl+Shift+B from
+//! Ctrl+B, and Ctrl+1 from a typed 1. A terminal that does not answer it still runs, but
+//! the shifted and numbered bindings fold onto their unshifted neighbours and are lost;
+//! the probe says which terminal is which.
 
 use crate::active::Step;
 use crate::editor::Motion;
+use crate::marks::{Align, Mark};
 use crate::tui::config;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::fmt;
@@ -30,14 +33,32 @@ pub enum Action {
     SelectAll,
     Delete(Step),
     Enter,
+    /// Tab, which moves between the two halves of the search bar and types a tab
+    /// everywhere else.
+    Tab,
     Undo,
+    Redo,
     Copy,
+    Cut,
     /// Whatever the clipboard holds: words to type in, or a picture to write beside the
     /// document and name in the block.
     Paste,
     Surround(&'static str),
+    /// An HTML tag pair either side of the selection: `<u>`, which is the only underline
+    /// markdown has.
+    Tag(&'static str),
     /// `[]()`, or `![]()` for an image.
     Link(&'static str),
+    /// Follow the link the cursor is standing in, or start one where it is not: one key
+    /// for the two things a writer wants to do with a link.
+    OpenOrLink,
+    /// A heading, a bullet, a number or a quote at the head of the lines being stood on.
+    Mark(Mark),
+    /// The block in or out of a fenced code block.
+    Fence,
+    Rule,
+    Table,
+    Align(Align),
     Save,
     Quit,
     OpenSearch,
@@ -45,6 +66,8 @@ pub enum Action {
     ToggleReading,
     CloseSearch,
     CycleSearch(Step),
+    ReplaceFound,
+    ReplaceAll,
     AcceptLint,
     CycleLint(Step),
     Learn,
@@ -67,14 +90,19 @@ pub struct Command {
     action: Action,
 }
 
-pub const COMMANDS: [Command; 19] = [
+/// Every command a key can be put on, in the order `markatui -keymap` lists them.
+pub const COMMANDS: &[Command] = &[
     Command { section: "Document", name: "save", default: "ctrl+s", action: Action::Save },
     Command { section: "Document", name: "quit", default: "ctrl+q", action: Action::Quit },
     Command { section: "Edit", name: "undo", default: "ctrl+z", action: Action::Undo },
+    Command { section: "Edit", name: "redo", default: "ctrl+y", action: Action::Redo },
     Command { section: "Edit", name: "select_all", default: "ctrl+a", action: Action::SelectAll },
+    Command { section: "Edit", name: "cut_selection", default: "ctrl+x", action: Action::Cut },
     Command { section: "Edit", name: "copy_selection", default: "ctrl+c", action: Action::Copy },
     // One paste for whatever the clipboard holds, words or picture, so there is no
     // second key to remember and no key that does nothing when the wrong thing is on it.
+    // Ctrl+V is bound to it as well, below: the terminals that take that key for their
+    // own paste never pass it on, so there is nothing to lose by having it here.
     Command { section: "Edit", name: "paste", default: "ctrl+p", action: Action::Paste },
     Command { section: "Find", name: "find", default: "ctrl+f", action: Action::OpenSearch },
     Command {
@@ -101,23 +129,134 @@ pub const COMMANDS: [Command; 19] = [
         default: "ctrl+i",
         action: Action::Surround("*"),
     },
+    // Ctrl+U is underline everywhere a writer has met it, and markdown has no underline
+    // of its own: the one style here that is written as HTML. Strikethrough, which used
+    // to have this key, is on the key the markdown editors give it.
+    Command {
+        section: "Formatting",
+        name: "underline_selection",
+        default: "ctrl+u",
+        action: Action::Tag("u"),
+    },
     Command {
         section: "Formatting",
         name: "strike_selection",
-        default: "ctrl+u",
+        default: "alt+s",
         action: Action::Surround("~~"),
     },
     Command {
         section: "Formatting",
+        name: "inline_code",
+        default: "ctrl+e",
+        action: Action::Surround("`"),
+    },
+    Command {
+        section: "Formatting",
         name: "link_selection",
-        default: "ctrl+shift+l",
-        action: Action::Link(""),
+        default: "ctrl+k",
+        action: Action::OpenOrLink,
     },
     Command {
         section: "Formatting",
         name: "insert_image",
         default: "ctrl+shift+i",
         action: Action::Link("!"),
+    },
+    // A heading by its depth, which is how every editor that has the keys spells it, and
+    // the paragraph key that takes whatever is there back off.
+    Command {
+        section: "Headings",
+        name: "heading_1",
+        default: "ctrl+1",
+        action: Action::Mark(Mark::Heading(1)),
+    },
+    Command {
+        section: "Headings",
+        name: "heading_2",
+        default: "ctrl+2",
+        action: Action::Mark(Mark::Heading(2)),
+    },
+    Command {
+        section: "Headings",
+        name: "heading_3",
+        default: "ctrl+3",
+        action: Action::Mark(Mark::Heading(3)),
+    },
+    Command {
+        section: "Headings",
+        name: "heading_4",
+        default: "ctrl+4",
+        action: Action::Mark(Mark::Heading(4)),
+    },
+    Command {
+        section: "Headings",
+        name: "heading_5",
+        default: "ctrl+5",
+        action: Action::Mark(Mark::Heading(5)),
+    },
+    Command {
+        section: "Headings",
+        name: "heading_6",
+        default: "ctrl+6",
+        action: Action::Mark(Mark::Heading(6)),
+    },
+    Command {
+        section: "Headings",
+        name: "paragraph",
+        default: "ctrl+0",
+        action: Action::Mark(Mark::Heading(0)),
+    },
+    Command {
+        section: "Blocks",
+        name: "bullet_list",
+        default: "ctrl+shift+b",
+        action: Action::Mark(Mark::Bullet),
+    },
+    Command {
+        section: "Blocks",
+        name: "numbered_list",
+        default: "ctrl+shift+n",
+        action: Action::Mark(Mark::Numbered),
+    },
+    Command {
+        section: "Blocks",
+        name: "task_list",
+        default: "ctrl+shift+x",
+        action: Action::Mark(Mark::Task),
+    },
+    Command {
+        section: "Blocks",
+        name: "quote_block",
+        default: "ctrl+shift+q",
+        action: Action::Mark(Mark::Quote),
+    },
+    Command {
+        section: "Blocks",
+        name: "code_block",
+        default: "ctrl+shift+k",
+        action: Action::Fence,
+    },
+    Command { section: "Blocks", name: "horizontal_rule", default: "alt+r", action: Action::Rule },
+    Command { section: "Blocks", name: "insert_table", default: "ctrl+t", action: Action::Table },
+    // The word processors' three keys, and the only alignment markdown has any way of
+    // writing down: which way a table's column reads.
+    Command {
+        section: "Align",
+        name: "align_left",
+        default: "ctrl+shift+l",
+        action: Action::Align(Align::Left),
+    },
+    Command {
+        section: "Align",
+        name: "align_centre",
+        default: "ctrl+shift+e",
+        action: Action::Align(Align::Centre),
+    },
+    Command {
+        section: "Align",
+        name: "align_right",
+        default: "ctrl+shift+r",
+        action: Action::Align(Align::Right),
     },
     // Control walks the suggestions the checker offered rather than the text; where it
     // has offered none, the caller lets it move the cursor as it always did.
@@ -260,11 +399,13 @@ fn code(name: &str) -> Option<KeyCode> {
     Some(KeyCode::F(name.strip_prefix('f')?.parse().ok()?))
 }
 
-/// Which key each command is on. Held in the order of [`COMMANDS`], so the two are read
-/// together and neither can name a command the other does not have.
+/// Which key each command is on — where it is on one at all — and which of them the
+/// config named for itself. Held in the order of [`COMMANDS`], so the three are read
+/// together and none can name a command the others do not have.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Keymap {
-    keys: Vec<Binding>,
+    keys: Vec<Option<Binding>>,
+    asked: Vec<bool>,
 }
 
 impl Default for Keymap {
@@ -274,17 +415,23 @@ impl Default for Keymap {
             .map(|command| {
                 let unreadable =
                     || panic!("{} is on an unreadable key: {}", command.name, command.default);
-                Binding::parse(command.default).unwrap_or_else(unreadable)
+                Some(Binding::parse(command.default).unwrap_or_else(unreadable))
             })
             .collect();
-        Keymap { keys }
+        Keymap { keys, asked: vec![false; COMMANDS.len()] }
     }
 }
 
 impl Keymap {
-    /// Put the command the config calls `name` on `binding`. Whether there is such a
-    /// command is the answer, so that the config can say which line it was.
-    pub fn bind(&mut self, name: &str, binding: Binding) -> bool {
+    /// Put the command the config calls `name` on `binding`, or, where there is none, on
+    /// no key at all. Whether there is such a command is the answer, so that the config
+    /// can say which line it was.
+    ///
+    /// A key another command holds only because it shipped that way is given up to this
+    /// one: a writer who puts ctrl+u on the strikethrough means ctrl+u to strike, not to
+    /// be told that the underline had it first. A key two lines of the config both name
+    /// is a different thing and stays a clash.
+    pub fn bind(&mut self, name: &str, binding: Option<Binding>) -> bool {
         let canonical = match name {
             // Names from keymaps installed before commands were made explicit. Reading
             // them keeps upgrades working; rendered maps always use the clearer names.
@@ -298,24 +445,35 @@ impl Keymap {
             "link" => "link_selection",
             "image" => "insert_image",
             "accept" => "accept_suggestion",
+            // The one word this editor spells the British way that a writer may well
+            // spell the other.
+            "align_center" => "align_centre",
             "learn" => "learn_word",
             name => name,
         };
         let Some(at) = COMMANDS.iter().position(|command| command.name == canonical) else {
             return false;
         };
+        for (key, asked) in self.keys.iter_mut().zip(&self.asked) {
+            if !asked && *key == binding {
+                *key = None;
+            }
+        }
         self.keys[at] = binding;
+        self.asked[at] = true;
         true
     }
 
     /// What `key` commands, where it commands anything. The first binding that takes it
     /// wins, so a key the config has put two commands on does the earlier of them.
     pub fn command(&self, key: KeyEvent) -> Option<Action> {
-        let at = self.keys.iter().position(|binding| binding.matches(key))?;
+        let at = self.keys.iter().position(|binding| binding.is_some_and(|on| on.matches(key)))?;
         Some(COMMANDS[at].action.clone())
     }
 
-    pub fn bindings(&self) -> impl Iterator<Item = (&'static str, &'static str, Binding)> + '_ {
+    pub fn bindings(
+        &self,
+    ) -> impl Iterator<Item = (&'static str, &'static str, Option<Binding>)> + '_ {
         COMMANDS
             .iter()
             .zip(&self.keys)
@@ -341,6 +499,11 @@ pub fn editing(key: KeyEvent) -> Action {
         (KeyCode::Esc, false, _) => Action::Quit,
         (KeyCode::Char('d'), true, _) => Action::Quit,
 
+        // The key every writer reaches for to paste, alongside the one in the config. A
+        // terminal that takes it for its own paste never passes it on, and what it sends
+        // instead arrives as a paste event; there is nothing lost by answering it here.
+        (KeyCode::Char('v'), true, _) => Action::Paste,
+
         (KeyCode::Left, true, _) => Action::Move(Motion::Word(-1), shift),
         (KeyCode::Right, true, _) => Action::Move(Motion::Word(1), shift),
         (KeyCode::Home, true, _) => Action::Move(Motion::Document(-1), shift),
@@ -357,7 +520,7 @@ pub fn editing(key: KeyEvent) -> Action {
         (KeyCode::Backspace, false, _) => Action::Delete(-1),
         (KeyCode::Delete, false, _) => Action::Delete(1),
         (KeyCode::Enter, false, _) => Action::Enter,
-        (KeyCode::Tab, false, _) => Action::Type("\t".into()),
+        (KeyCode::Tab, false, _) => Action::Tab,
         (KeyCode::Char(character), false, _) => Action::Type(character.to_string()),
         _ => Action::Nothing,
     }
@@ -375,9 +538,14 @@ pub fn searching(key: KeyEvent) -> Action {
     }
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
     match (key.code, control) {
-        // Either way of saying the word is typed: the bar goes away and the cursor is
-        // left on the occurrence the search walked to.
-        (KeyCode::Esc | KeyCode::Enter, _) => Action::CloseSearch,
+        // Saying the word is typed: the bar goes away and the cursor is left on the
+        // occurrence the search walked to.
+        (KeyCode::Esc, _) => Action::CloseSearch,
+        // Which is what Enter means in the half of the bar holding the word. In the
+        // other half it is the swap being asked for, one occurrence at a time.
+        (KeyCode::Enter, _) => Action::Enter,
+        (KeyCode::Tab, _) => Action::Tab,
+        (KeyCode::Char('a'), true) => Action::ReplaceAll,
         (KeyCode::Up, true) => Action::CycleSearch(-1),
         (KeyCode::Down, true) => Action::CycleSearch(1),
         (KeyCode::Backspace, false) => Action::Delete(-1),
@@ -475,10 +643,39 @@ mod tests {
     fn wraps_and_links_from_the_control_keys() {
         assert_eq!(control(KeyCode::Char('b')), Action::Surround("**"));
         assert_eq!(control(KeyCode::Char('i')), Action::Surround("*"));
-        assert_eq!(control(KeyCode::Char('u')), Action::Surround("~~"));
+        assert_eq!(control(KeyCode::Char('e')), Action::Surround("`"));
+        // Ctrl+U is underline, the way it is in a word processor, and markdown writes
+        // that as HTML. Strikethrough has the key the markdown editors give it.
+        assert_eq!(control(KeyCode::Char('u')), Action::Tag("u"));
+        assert_eq!(editing(press(KeyCode::Char('s'), KeyModifiers::ALT)), Action::Surround("~~"));
+        assert_eq!(control(KeyCode::Char('k')), Action::OpenOrLink);
         let both = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
-        assert_eq!(editing(press(KeyCode::Char('L'), both)), Action::Link(""));
         assert_eq!(editing(press(KeyCode::Char('I'), both)), Action::Link("!"));
+    }
+
+    #[test]
+    fn marks_the_blocks_from_the_shifted_and_numbered_keys() {
+        assert_eq!(control(KeyCode::Char('1')), Action::Mark(Mark::Heading(1)));
+        assert_eq!(control(KeyCode::Char('0')), Action::Mark(Mark::Heading(0)));
+        assert_eq!(control(KeyCode::Char('t')), Action::Table);
+        let both = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
+        assert_eq!(editing(press(KeyCode::Char('B'), both)), Action::Mark(Mark::Bullet));
+        assert_eq!(editing(press(KeyCode::Char('N'), both)), Action::Mark(Mark::Numbered));
+        assert_eq!(editing(press(KeyCode::Char('X'), both)), Action::Mark(Mark::Task));
+        assert_eq!(editing(press(KeyCode::Char('Q'), both)), Action::Mark(Mark::Quote));
+        assert_eq!(editing(press(KeyCode::Char('K'), both)), Action::Fence);
+        assert_eq!(editing(press(KeyCode::Char('r'), KeyModifiers::ALT)), Action::Rule);
+        // The shifted keys are the unshifted ones' neighbours, and must not be them.
+        assert_eq!(control(KeyCode::Char('b')), Action::Surround("**"));
+        assert_eq!(control(KeyCode::Char('q')), Action::Quit);
+    }
+
+    #[test]
+    fn aligns_a_column_the_way_a_word_processor_does() {
+        let both = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
+        assert_eq!(editing(press(KeyCode::Char('L'), both)), Action::Align(Align::Left));
+        assert_eq!(editing(press(KeyCode::Char('E'), both)), Action::Align(Align::Centre));
+        assert_eq!(editing(press(KeyCode::Char('R'), both)), Action::Align(Align::Right));
     }
 
     #[test]
@@ -521,9 +718,10 @@ mod tests {
     #[test]
     fn pastes_whatever_the_clipboard_holds_on_one_key() {
         assert_eq!(control(KeyCode::Char('c')), Action::Copy);
+        assert_eq!(control(KeyCode::Char('x')), Action::Cut);
         assert_eq!(control(KeyCode::Char('p')), Action::Paste);
-        // The one paste took the older key's place, so nothing is left on it.
-        assert_eq!(control(KeyCode::Char('v')), Action::Nothing);
+        // And the key a writer reaches for first, where the terminal passes it on.
+        assert_eq!(control(KeyCode::Char('v')), Action::Paste);
     }
 
     #[test]
@@ -550,8 +748,12 @@ mod tests {
             searching(press(KeyCode::Char('x'), KeyModifiers::NONE)),
             Action::Type("x".into())
         );
-        assert_eq!(searching(press(KeyCode::Enter, KeyModifiers::NONE)), Action::CloseSearch);
         assert_eq!(searching(press(KeyCode::Esc, KeyModifiers::NONE)), Action::CloseSearch);
+        // Enter and Tab belong to the two halves of the bar: what they do depends on
+        // which of them the writer is typing into.
+        assert_eq!(searching(press(KeyCode::Enter, KeyModifiers::NONE)), Action::Enter);
+        assert_eq!(searching(press(KeyCode::Tab, KeyModifiers::NONE)), Action::Tab);
+        assert_eq!(searching(press(KeyCode::Char('a'), KeyModifiers::CONTROL)), Action::ReplaceAll);
         assert_eq!(searching(press(KeyCode::Down, KeyModifiers::CONTROL)), Action::CycleSearch(1));
         // Undo belongs to the document, not to the word being typed into the bar.
         assert_eq!(searching(press(KeyCode::Char('z'), KeyModifiers::CONTROL)), Action::Nothing);

@@ -5,6 +5,7 @@
 //! Offsets are characters. The block's own source is the only text there is — there is no
 //! rendered copy to keep in step — so every edit here is an edit of the markdown.
 
+use crate::marks::{self, Mark};
 use crate::text::{byte_offset, length};
 
 /// Which way a movement goes. Left and up are -1, right and down 1.
@@ -257,15 +258,8 @@ impl Active {
     /// Put `marker` either side of the selection, or start an empty pair to type into.
     /// A second press takes it off again.
     pub fn surround(&mut self, marker: &str) {
-        let (mut start, mut end) = self.selection().unwrap_or((self.cursor, self.cursor));
+        let (start, end) = self.trimmed_selection();
         let characters: Vec<char> = self.text.chars().collect();
-        // Markdown wants the markers snug against the words: `**bold** `, never `**bold **`.
-        while end > start && characters[end - 1].is_whitespace() {
-            end -= 1;
-        }
-        while start < end && characters[start].is_whitespace() {
-            start += 1;
-        }
         // Stars work as bits: one is italic, two is bold, three is both. Only this
         // marker's own stars come off, so bold nests inside italic and a second press
         // unpicks it. Tildes have no such arithmetic — a pair is a strikeout — but the
@@ -285,6 +279,113 @@ impl Active {
             self.replace(start, start, marker);
             self.select(start + width, end + width);
         }
+    }
+
+    /// Where the selection runs with the whitespace at its edges left out, or the bare
+    /// cursor where there is none. Markdown wants its markers snug against the words:
+    /// `**bold** `, never `**bold **`.
+    fn trimmed_selection(&self) -> (usize, usize) {
+        let (mut start, mut end) = self.selection().unwrap_or((self.cursor, self.cursor));
+        let characters: Vec<char> = self.text.chars().collect();
+        while end > start && characters[end - 1].is_whitespace() {
+            end -= 1;
+        }
+        while start < end && characters[start].is_whitespace() {
+            start += 1;
+        }
+        (start, end)
+    }
+
+    /// Put an HTML tag pair either side of the selection — the only way markdown has of
+    /// saying underline. A second press takes it off again.
+    pub fn wrap(&mut self, tag: &str) {
+        let (start, end) = self.trimmed_selection();
+        let (open, close) = (format!("<{tag}>"), format!("</{tag}>"));
+        let (open_len, close_len) = (length(&open), length(&close));
+        let wrapped = start >= open_len
+            && self.slice(start - open_len, start) == open
+            && end + close_len <= self.length()
+            && self.slice(end, end + close_len) == close;
+
+        if wrapped {
+            self.replace(end, end + close_len, "");
+            self.replace(start - open_len, start, "");
+            self.select(start - open_len, end - open_len);
+        } else {
+            self.replace(end, end, &close);
+            self.replace(start, start, &open);
+            self.select(start + open_len, end + open_len);
+        }
+    }
+
+    /// Put the whole block in a fenced code block, or take it out of one. The cursor
+    /// lands at the end of the opening fence, which is where the language goes.
+    pub fn fence(&mut self) {
+        const FENCE: &str = "```";
+        let lines: Vec<&str> = self.text.split('\n').collect();
+        let fenced = lines.len() > 1
+            && lines[0].trim_start().starts_with(FENCE)
+            && lines[lines.len() - 1].trim().starts_with(FENCE);
+
+        self.anchor = None;
+        self.text = match fenced {
+            true => lines[1..lines.len() - 1].join("\n"),
+            false => format!("{FENCE}\n{}\n{FENCE}", self.text),
+        };
+        self.place(if fenced { 0 } else { FENCE.len() });
+    }
+
+    /// Put `mark` at the head of every line the cursor or the selection touches, or take
+    /// it off them where they all carry it already. A selection stays over the lines it
+    /// was on, so the same key pressed twice puts the block back.
+    pub fn mark_lines(&mut self, mark: Mark) {
+        let selected = self.selection().is_some();
+        let (start, end) = self.touched_lines();
+        let text = self.slice(start, end).to_string();
+        let lines: Vec<&str> = text.split('\n').collect();
+        let marked = marks::toggle(&lines, mark);
+
+        // The cursor keeps its place among the words: everything a mark changes is at the
+        // head of the line, so the line's own growth is what the cursor moves by.
+        let (line_start, _) = self.line_bounds(self.cursor);
+        let index = self.slice(start, line_start).matches('\n').count();
+        let grown = length(&marked[index]) as isize - length(lines[index]) as isize;
+        let within = (self.cursor - line_start) as isize + grown;
+        let before: usize = marked[..index].iter().map(|line| length(line) + 1).sum();
+        let cursor = start + before + within.clamp(0, length(&marked[index]) as isize) as usize;
+
+        let marked = marked.join("\n");
+        let count = length(&marked);
+        self.replace(start, end, &marked);
+        match selected {
+            true => self.select(start, start + count),
+            false => {
+                self.anchor = None;
+                self.place(cursor);
+            }
+        }
+    }
+
+    /// The whole of every line the cursor or the selection touches. Marking a line is a
+    /// change to the line, not to the part of it that happens to be selected.
+    fn touched_lines(&self) -> (usize, usize) {
+        let (from, to) = self.selection().unwrap_or((self.cursor, self.cursor));
+        (self.line_bounds(from).0, self.line_bounds(to).1)
+    }
+
+    /// The list item the cursor is standing in, if it is standing in one.
+    pub fn item(&self) -> Option<marks::Item> {
+        let (start, end) = self.line_bounds(self.cursor);
+        marks::item(self.slice(start, end))
+    }
+
+    /// End the list: the marker of the empty item the writer pressed Enter on comes off,
+    /// leaving the line for whatever they write instead.
+    pub fn end_item(&mut self, item: &marks::Item) {
+        let (start, _) = self.line_bounds(self.cursor);
+        self.replace(start, start + item.len, "");
+        self.anchor = None;
+        self.place(start);
     }
 
     /// `[selection](|)`, or `[|]()` with nothing selected. `prefix` is `!` for an image.

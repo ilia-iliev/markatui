@@ -234,6 +234,9 @@ fn bits_for(config: &config::Config, bits: u16) -> Style {
     if bits & style::STRIKE != 0 {
         style = style.add_modifier(Modifier::CROSSED_OUT);
     }
+    if bits & style::UNDERLINE != 0 {
+        style = style.add_modifier(Modifier::UNDERLINED);
+    }
     // The wash goes on last: it has to be the ground whatever else the words are.
     if bits & style::LINT != 0 {
         style = style.bg(palette.lint).fg(palette.lint_ink);

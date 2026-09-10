@@ -2,6 +2,7 @@
 //! Nothing here asserts a colour: this is about where the rows fall and what is in them.
 
 use markatui::editor::{Editor, Motion};
+use markatui::marks::{Align, Mark};
 use markatui::tui::images::Gallery;
 use markatui::tui::view;
 use ratatui::Terminal;
@@ -305,4 +306,66 @@ fn takes_the_caret_down_to_the_line_enter_opened() {
     editor.enter();
     drawn(&editor, 40, 10, &mut document, &mut Gallery::blind());
     assert_eq!(document.caret(), Some((row + 1, 0)));
+}
+
+/// A paragraph made into something else is drawn as that thing the moment the cursor
+/// leaves it: the marker at the head of the line is what the block is, and nothing has to
+/// be told about the change twice.
+#[test]
+fn draws_a_paragraph_the_key_turned_into_a_heading_a_list_and_a_quote() {
+    let path = written("marks", "Title\n\none\ntwo\n\nquoted");
+    let mut editor = Editor::open(&path);
+
+    editor.activate(0, 0);
+    editor.mark(Mark::Heading(2));
+    editor.activate(1, 0);
+    editor.move_cursor(Motion::Block(1), true);
+    editor.mark(Mark::Bullet);
+    editor.activate(2, 0);
+    editor.mark(Mark::Quote);
+    editor.activate(0, 0);
+
+    assert_eq!(editor.source(), "## Title\n\n- one\n- two\n\n> quoted");
+    let rows = screen_of(&editor, 60, 20);
+    assert!(rows.iter().any(|row| row.trim() == "\u{2022} one"), "{rows:#?}");
+    assert!(rows.iter().any(|row| row.trim() == "\u{2022} two"), "{rows:#?}");
+    assert!(rows.iter().any(|row| row.contains("\u{258e} quoted")), "{rows:#?}");
+    forget(&path);
+}
+
+/// The one thing a column's alignment does not change: the file says which way the column
+/// reads, and the terminal goes on drawing every cell the same way.
+#[test]
+fn sets_a_column_in_the_file_and_draws_the_table_as_it_always_did() {
+    let path = written("align", "| a | b |\n| --- | --- |\n| 1 | 2 |\n\nwords");
+    let mut editor = Editor::open(&path);
+
+    editor.activate(0, 2);
+    editor.align(Align::Centre);
+    assert!(editor.block(0).contains("| :---: | --- |"), "{}", editor.block(0));
+
+    editor.activate(1, 0);
+    let rows = screen_of(&editor, 60, 20);
+    assert!(
+        rows.iter().any(|row| row.trim()
+            == "\u{250c}\u{2500}\u{2500}\u{2500}\u{252c}\u{2500}\u{2500}\u{2500}\u{2510}"),
+        "{rows:#?}"
+    );
+    assert!(rows.iter().any(|row| row.trim() == "\u{2502} a \u{2502} b \u{2502}"), "{rows:#?}");
+    forget(&path);
+}
+
+/// A document on disk for a test to open, in a directory of its own so that [`forget`]
+/// can take the whole of it away again.
+fn written(name: &str, source: &str) -> std::path::PathBuf {
+    let directory = std::env::temp_dir().join(format!("markatui-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a temporary directory");
+    let path = directory.join("post.md");
+    std::fs::write(&path, source).expect("a document to open");
+    path
+}
+
+/// The same as [`screen`], for a document a test built rather than the sample.
+fn screen_of(editor: &Editor, width: u16, height: u16) -> Vec<String> {
+    drawn(editor, width, height, &mut view::Document::default(), &mut Gallery::blind())
 }

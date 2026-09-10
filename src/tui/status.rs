@@ -2,6 +2,7 @@
 //! rows it takes, are the view's.
 
 use super::{App, Mode};
+use crate::editor::Field;
 use crate::tui::theme;
 
 impl App {
@@ -22,16 +23,17 @@ impl App {
             return vec![format!("Never show {rule} again?"), "[y] [n] [esc]".to_string()];
         }
         if self.mode == Mode::Searching {
-            return vec![self.search_line(width)];
+            return self.search_lines(width);
         }
-        if !self.notice.is_empty() {
-            // A config with a great deal wrong with it is not worth the whole screen.
-            const SHOWN: usize = 3;
-            let mut lines: Vec<String> = self.notice.iter().take(SHOWN).cloned().collect();
-            if let Some(rest) = self.notice.len().checked_sub(SHOWN).filter(|rest| *rest > 0) {
-                lines.push(format!("and {rest} more"));
-            }
-            return lines;
+        if let Some(first) = self.notice.first() {
+            // A config with a great deal wrong with it is not worth the whole screen: one
+            // line of it is shown, and the rest are counted on the end of that line.
+            let rest = self.notice.len() - 1;
+            let line = match rest {
+                0 => first.clone(),
+                rest => format!("{first}  and {rest} more"),
+            };
+            return vec![line];
         }
         if let Some(error) = &self.editor.error {
             return vec![error.clone()];
@@ -45,10 +47,12 @@ impl App {
         self.lint_line().into_iter().collect()
     }
 
-    /// `find <word>` with which occurrence of how many at the far edge of the column, so
-    /// that the count stays put while the word is typed. Asking for another occurrence of
-    /// a word that has only the one moves nothing, and that is the answer given instead.
-    fn search_line(&self, width: u16) -> String {
+    /// The word being looked for and what is going in its place, one line each, with the
+    /// half the writer is typing into carrying the caret. Which occurrence of how many
+    /// sits at the far edge of the column, so that the count stays put while the word is
+    /// typed; asking for another occurrence of a word that has only the one moves
+    /// nothing, and that is the answer given instead.
+    fn search_lines(&self, width: u16) -> Vec<String> {
         let search = &self.editor.search;
         let counter = match () {
             _ if search.needle.is_empty() => String::new(),
@@ -58,10 +62,33 @@ impl App {
                 None => "no matches".into(),
             },
         };
-        let typed = format!("FIND {}", search.needle);
+        vec![
+            self.search_line("FIND", &search.needle, Field::Needle, &counter, width),
+            self.search_line(
+                "SWAP",
+                &search.replacement,
+                Field::Replacement,
+                "[tab] [enter] [ctrl+a all]",
+                width,
+            ),
+        ]
+    }
+
+    /// One half of the bar: what it is for, what has been typed into it, and what it has
+    /// to say for itself at the far edge of the column.
+    fn search_line(
+        &self,
+        label: &str,
+        typed: &str,
+        field: Field,
+        note: &str,
+        width: u16,
+    ) -> String {
+        let caret = if self.editor.search.field == field { "_" } else { "" };
+        let left = format!("{label} {typed}{caret}");
         let room = (theme::content_width().min(width) as usize)
-            .saturating_sub(typed.chars().count() + counter.chars().count());
-        format!("{typed}{}{counter}", " ".repeat(room.max(2)))
+            .saturating_sub(left.chars().count() + note.chars().count());
+        format!("{left}{}{note}", " ".repeat(room.max(2)))
     }
 
     /// The checker's objection, the one suggestion on show, and how many others there

@@ -1,4 +1,4 @@
-# markatui keymap. Change this file or run `markatui keymap <command> <key>`.
+# markatui keymap. Change this file or run `markatui -keymap <command> <key>`.
 
 # Document
 save = "ctrl+s"
@@ -6,7 +6,9 @@ quit = "ctrl+q"
 
 # Edit
 undo = "ctrl+z"
+redo = "ctrl+y"
 select_all = "ctrl+a"
+cut_selection = "ctrl+x"
 copy_selection = "ctrl+c"
 paste = "ctrl+p"
 
@@ -20,9 +22,34 @@ toggle_reading = "ctrl+r"
 # Formatting
 bold_selection = "ctrl+b"
 italic_selection = "ctrl+i"
-strike_selection = "ctrl+u"
-link_selection = "ctrl+shift+l"
+underline_selection = "ctrl+u"
+strike_selection = "alt+s"
+inline_code = "ctrl+e"
+link_selection = "ctrl+k"
 insert_image = "ctrl+shift+i"
+
+# Headings
+heading_1 = "ctrl+1"
+heading_2 = "ctrl+2"
+heading_3 = "ctrl+3"
+heading_4 = "ctrl+4"
+heading_5 = "ctrl+5"
+heading_6 = "ctrl+6"
+paragraph = "ctrl+0"
+
+# Blocks
+bullet_list = "ctrl+shift+b"
+numbered_list = "ctrl+shift+n"
+task_list = "ctrl+shift+x"
+quote_block = "ctrl+shift+q"
+code_block = "ctrl+shift+k"
+horizontal_rule = "alt+r"
+insert_table = "ctrl+t"
+
+# Align
+align_left = "ctrl+shift+l"
+align_centre = "ctrl+shift+e"
+align_right = "ctrl+shift+r"
 
 # Suggestions
 previous_suggestion = "ctrl+up"

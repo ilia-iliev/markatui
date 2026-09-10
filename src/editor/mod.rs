@@ -6,20 +6,26 @@ mod findings;
 mod motion;
 mod undo;
 
-pub use findings::{LintState, SearchState};
+pub use findings::{Field, LintState, SearchState};
 pub use motion::Motion;
 
 use crate::active::{Active, Step};
 use crate::blocks::{self, Span};
+use crate::marks::{self, Align, Mark};
 use crate::parse;
 use crate::state;
 use crate::storage;
+use crate::text::byte_offset;
 use std::collections::VecDeque;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use undo::Undo;
+
+/// The table a writer is given to fill in. Two columns and one row of them, which is the
+/// smallest thing that still reads as a table once it is drawn.
+const TABLE: &str = "| Heading | Heading |\n| --- | --- |\n|  |  |";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EditRun {
@@ -40,6 +46,9 @@ pub struct Editor {
     /// how far into it. A selection inside one block is the active block's own.
     anchor: Option<(usize, usize)>,
     undo: VecDeque<Undo>,
+    /// What the undos took back, newest last, for a writer who has changed their mind
+    /// twice. Emptied by the next edit.
+    redo: Vec<Undo>,
     revision: u64,
     saved_revision: u64,
     /// The kind of repeated edit still being added to the newest undo state.
@@ -97,6 +106,7 @@ impl Editor {
             index: 0,
             anchor: None,
             undo: VecDeque::new(),
+            redo: Vec::new(),
             revision: u64::from(hoisted),
             saved_revision: 0,
             edit_run: None,
@@ -203,14 +213,39 @@ impl Editor {
 
     /// Break the block in two, or add a line to it. A second Enter ends the block rather
     /// than leaving a blank line in it — the newline the first one left is taken back out.
+    ///
+    /// A list is the exception: Enter in one opens the next item rather than a bare line,
+    /// and Enter on an item with nothing in it says the list is over.
     pub fn enter(&mut self) {
         if self.take_spanning_selection("") {
             return;
         }
-        if !self.active.ends_block() {
-            self.insert("\n");
-            return;
+        match self.active.item() {
+            Some(item) if !item.empty => {
+                self.active.insert(&format!("\n{}", item.next));
+                self.record_edit();
+                return;
+            }
+            // The empty item goes, and what is left of the block is broken off below it
+            // the way any other Enter at the end of a line would break it.
+            Some(item) => {
+                self.active.end_item(&item);
+                if !self.active.ends_block() {
+                    self.record_edit();
+                    return;
+                }
+            }
+            None if !self.active.ends_block() => {
+                self.insert("\n");
+                return;
+            }
+            None => {}
         }
+        self.split_block();
+    }
+
+    /// Break the block at the cursor, dropping the newline the writer typed to get here.
+    fn split_block(&mut self) {
         let (before, after) = self.active.split();
         let (mut split, mut separators) = blocks::replacement(&before);
         self.hoist(&mut split, &mut separators);
@@ -269,10 +304,89 @@ impl Editor {
         self.record_edit();
     }
 
+    /// Underline, which markdown has no marker of its own for and HTML does.
+    pub fn wrap(&mut self, tag: &str) {
+        self.clear_spanning_selection();
+        self.active.wrap(tag);
+        self.record_edit();
+    }
+
+    /// Put a heading, a bullet, a number or a quote at the head of the lines the writer
+    /// is standing on, or take it off them.
+    pub fn mark(&mut self, mark: Mark) {
+        self.clear_spanning_selection();
+        self.active.mark_lines(mark);
+        self.record_edit();
+    }
+
+    pub fn fence(&mut self) {
+        self.clear_spanning_selection();
+        self.active.fence();
+        self.record_edit();
+    }
+
+    /// Set the column the cursor is in to read left, centre or right. Only a table has
+    /// columns; anywhere else the key does nothing rather than something surprising.
+    pub fn align(&mut self, align: Align) {
+        let Some((table, cursor)) = marks::aligned(self.active.text(), self.active.cursor(), align)
+        else {
+            return;
+        };
+        self.clear_spanning_selection();
+        self.active = Active::new(&table, cursor);
+        self.record_edit();
+    }
+
+    /// A rule of its own, with an empty paragraph under it for what comes next: a writer
+    /// asking for a rule is between two things, not at the end of the document.
+    pub fn insert_rule(&mut self) {
+        self.add_block("---");
+        self.add_block("");
+        self.record_edit();
+    }
+
+    /// A table to fill in, with the first heading selected to be typed over.
+    pub fn insert_table(&mut self) {
+        self.add_block(TABLE);
+        self.active.select(2, 9);
+        self.record_edit();
+    }
+
+    /// Put `text` in as a block of its own after the one the cursor is in, and move into
+    /// it. A block with nothing in it is used rather than pushed down: an empty paragraph
+    /// is where the writer already is.
+    fn add_block(&mut self, text: &str) {
+        self.clear_spanning_selection();
+        self.store_active();
+        if !self.blocks[self.index].trim().is_empty() {
+            self.blocks.insert(self.index + 1, Arc::new(String::new()));
+            self.gaps.insert(self.index + 1, Arc::new(blocks::PARAGRAPH.to_string()));
+            self.index += 1;
+        }
+        self.blocks[self.index] = Arc::new(text.to_string());
+        self.active = Active::new(&self.blocks[self.index], 0);
+    }
+
     pub fn insert_link(&mut self, prefix: &str) {
         self.clear_spanning_selection();
         self.active.insert_link(prefix);
         self.record_edit();
+    }
+
+    /// Where the link under the cursor points, if it is standing in one. The address is
+    /// as the writer wrote it; a relative one is resolved against the document, which is
+    /// the directory it was written relative to.
+    pub fn link_at_cursor(&self) -> Option<String> {
+        let text = self.active.text();
+        let url = parse::link_at(text, byte_offset(text, self.active.cursor()))?;
+        if url.contains("://") || url.starts_with('#') || url.starts_with("mailto:") {
+            return Some(url);
+        }
+        let beside = self.path.parent()?.join(&url);
+        Some(match beside.exists() {
+            true => beside.to_string_lossy().into_owned(),
+            false => url,
+        })
     }
 
     /// A picture that has just been written beside the document, named by the block it
@@ -424,6 +538,153 @@ mod tests {
         assert_eq!(texts(&editor), ["one", " two"]);
         assert_eq!(editor.index(), 1);
         assert_eq!(editor.source(), "one\n\n two");
+    }
+
+    #[test]
+    fn carries_the_list_marker_onto_the_next_line() {
+        let mut editor = document("- one");
+        editor.activate(0, 5);
+        editor.enter();
+        assert_eq!(texts(&editor), ["- one\n- "]);
+        // The item left empty says the list is over: the marker goes, and what follows
+        // is a paragraph of its own.
+        editor.enter();
+        assert_eq!(texts(&editor), ["- one", ""]);
+        assert_eq!(editor.index(), 1);
+    }
+
+    #[test]
+    fn counts_the_next_item_of_a_numbered_list() {
+        let mut editor = document("2. one");
+        editor.activate(0, 6);
+        editor.enter();
+        assert_eq!(texts(&editor), ["2. one\n3. "]);
+    }
+
+    /// The one empty item goes and nothing is broken off: there is no line above it to
+    /// break away from.
+    #[test]
+    fn ends_a_list_that_was_only_ever_one_item() {
+        let mut editor = document("");
+        editor.activate(0, 0);
+        editor.insert("- ");
+        editor.enter();
+        assert_eq!(texts(&editor), [""]);
+    }
+
+    #[test]
+    fn marks_the_lines_the_writer_is_standing_on() {
+        let mut editor = document("one\ntwo");
+        editor.activate(0, 1);
+        editor.mark(Mark::Bullet);
+        assert_eq!(texts(&editor), ["- one\ntwo"]);
+        // The cursor keeps its place among the words rather than its place in the line.
+        assert_eq!(editor.active().cursor(), 3);
+        editor.mark(Mark::Bullet);
+        assert_eq!(texts(&editor), ["one\ntwo"]);
+    }
+
+    #[test]
+    fn marks_every_line_a_selection_runs_through() {
+        let mut editor = document("one\ntwo\nthree");
+        editor.activate(0, 1);
+        editor.active.select(1, 5);
+        editor.mark(Mark::Numbered);
+        assert_eq!(texts(&editor), ["1. one\n2. two\nthree"]);
+    }
+
+    #[test]
+    fn puts_a_block_in_a_fence_and_takes_it_out_again() {
+        let mut editor = document("x = 1");
+        editor.activate(0, 0);
+        editor.fence();
+        assert_eq!(texts(&editor), ["```\nx = 1\n```"]);
+        // The cursor is where the language goes.
+        assert_eq!(editor.active().cursor(), 3);
+        editor.fence();
+        assert_eq!(texts(&editor), ["x = 1"]);
+    }
+
+    #[test]
+    fn adds_a_rule_with_somewhere_to_go_on_writing() {
+        let mut editor = document("one");
+        editor.activate(0, 3);
+        editor.insert_rule();
+        assert_eq!(texts(&editor), ["one", "---", ""]);
+        assert_eq!(editor.index(), 2);
+        assert_eq!(editor.source(), "one\n\n---\n\n");
+    }
+
+    #[test]
+    fn adds_a_table_with_the_first_heading_ready_to_type_over() {
+        let mut editor = document("one");
+        editor.activate(0, 3);
+        editor.insert_table();
+        assert_eq!(editor.index(), 1);
+        assert_eq!(editor.active().selected_text(), "Heading");
+        editor.insert("When");
+        assert_eq!(editor.block(1), "| When | Heading |\n| --- | --- |\n|  |  |");
+    }
+
+    #[test]
+    fn sets_the_column_the_cursor_is_in_and_leaves_a_paragraph_alone() {
+        let mut editor = document("| a | b |\n| --- | --- |\n| 1 | 2 |");
+        editor.activate(0, 7);
+        editor.align(Align::Right);
+        assert_eq!(editor.block(0), "| a | b |\n| --- | ---: |\n| 1 | 2 |");
+
+        let mut editor = document("just words");
+        editor.activate(0, 3);
+        editor.align(Align::Centre);
+        assert_eq!(texts(&editor), ["just words"]);
+    }
+
+    #[test]
+    fn underlines_with_the_only_marker_markdown_has_for_it() {
+        let mut editor = document("one two");
+        editor.activate(0, 0);
+        editor.active.select(0, 3);
+        editor.wrap("u");
+        assert_eq!(texts(&editor), ["<u>one</u> two"]);
+        editor.wrap("u");
+        assert_eq!(texts(&editor), ["one two"]);
+    }
+
+    #[test]
+    fn puts_back_what_an_undo_took() {
+        let mut editor = document("one");
+        editor.activate(0, 3);
+        editor.insert(" two");
+        editor.undo();
+        assert_eq!(texts(&editor), ["one"]);
+        editor.redo();
+        assert_eq!(texts(&editor), ["one two"]);
+        // And a fresh edit is the end of what there was to put back.
+        editor.undo();
+        editor.insert("!");
+        editor.redo();
+        assert_eq!(texts(&editor), ["one!"]);
+    }
+
+    #[test]
+    fn swaps_one_occurrence_and_then_the_rest() {
+        let mut editor = document("cat\n\na cat and a cat");
+        editor.open_search();
+        editor.search_for("cat");
+        editor.search.replacement = "dog".to_string();
+        editor.replace_found();
+        assert_eq!(texts(&editor), ["dog", "a cat and a cat"]);
+        editor.replace_all();
+        assert_eq!(texts(&editor), ["dog", "a dog and a dog"]);
+    }
+
+    #[test]
+    fn follows_the_link_the_cursor_is_standing_in() {
+        let mut editor = document("go [home](https://example.com) now");
+        editor.activate(0, 5);
+        assert_eq!(editor.link_at_cursor().as_deref(), Some("https://example.com"));
+        editor.activate(0, 0);
+        assert_eq!(editor.link_at_cursor(), None);
     }
 
     #[test]
