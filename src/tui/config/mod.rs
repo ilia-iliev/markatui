@@ -97,11 +97,17 @@ pub fn set_theme(name: &str) -> Result<(), String> {
     rewrite(|text| setting_in(text, "theme", theme.name(), &["inherit_background"]))
 }
 
-/// Choose how the foot of the screen is coloured for future runs.
-pub fn set_footer(name: &str) -> Result<(), String> {
-    let footer = Footer::parse(name)
-        .ok_or_else(|| format!("there is no footer called {name:?}; choose {}", Footer::CHOICES))?;
-    rewrite(|text| setting_in(text, "footer", footer.name(), &[]))
+/// Put the config back to the defaults, and say which file that was. The file goes rather
+/// than being written empty: what is not there is what the editor reads as the defaults,
+/// and there is nothing left over to puzzle at later.
+pub fn reset() -> Result<PathBuf, String> {
+    let path = path()?;
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(path),
+        // Having no config is the state a reset is after, not a failure to reach it.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(path),
+        Err(error) => Err(format!("{}: {error}", path.display())),
+    }
 }
 
 /// Read the config file, put `change` through it, and write it back. A config that is
@@ -382,18 +388,6 @@ mod tests {
             setting_in("theme = \"light\"\n", "theme", "terminal", stale),
             "theme = \"terminal\"\n"
         );
-    }
-
-    /// The foot of the screen is settled apart from the preset, so writing one leaves
-    /// the other where the writer put it.
-    #[test]
-    fn writes_a_footer_beside_the_theme() {
-        let text = "theme = \"light\"\nfooter = \"band\"\n";
-        assert_eq!(
-            setting_in(text, "footer", "paper", &[]),
-            "theme = \"light\"\nfooter = \"paper\"\n"
-        );
-        assert_eq!(setting_in("", "footer", "invert", &[]), "footer = \"invert\"\n");
     }
 
     /// Band is the palette's own plate; the other two are the page's two colours, one

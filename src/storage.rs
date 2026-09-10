@@ -101,6 +101,22 @@ fn write_and_replace(
     File::open(directory)?.sync_all()
 }
 
+/// Put a pasted picture beside `document` and say what it ended up called. The name is
+/// the document's own with a number after it — `post-1.png`, then `post-2.png` — so that
+/// the pictures of a post sort next to it and a second paste never writes over the first.
+/// The name alone is the answer: a relative path is what the document names a picture by,
+/// and is read back from the directory the document is in.
+pub fn write_picture(document: &Path, png: &[u8]) -> io::Result<String> {
+    let directory = document.parent().unwrap_or_else(|| Path::new("."));
+    let stem = document.file_stem().and_then(|name| name.to_str()).unwrap_or("picture");
+    let name = (1..)
+        .map(|number| format!("{stem}-{number}.png"))
+        .find(|name| !directory.join(name).exists())
+        .expect("the numbers outlast the disk");
+    write_atomic(&directory.join(&name), png)?;
+    Ok(name)
+}
+
 /// Replace one of the editor's own small stores — the writer's dictionary, the cursor it
 /// left in each file, the mode it was closed in — making the directory it lives in if
 /// this is the first time.
@@ -122,14 +138,19 @@ pub fn replace(path: &Path, contents: &[u8]) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn replaces_a_file_without_leaving_the_temporary_one() {
+    fn directory() -> PathBuf {
         let directory = std::env::temp_dir().join(format!(
             "markatui-storage-{}-{}",
             std::process::id(),
             TEMP_ID.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&directory).unwrap();
+        directory
+    }
+
+    #[test]
+    fn replaces_a_file_without_leaving_the_temporary_one() {
+        let directory = directory();
         let path = directory.join("post.md");
         fs::write(&path, "old").unwrap();
 
@@ -137,6 +158,20 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "new");
         assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Every pasted picture gets a name of its own, so the second one does not land on
+    /// the first.
+    #[test]
+    fn names_a_pasted_picture_after_the_document_and_counts_up() {
+        let directory = directory();
+        let document = directory.join("post.md");
+
+        assert_eq!(write_picture(&document, b"one").unwrap(), "post-1.png");
+        assert_eq!(write_picture(&document, b"two").unwrap(), "post-2.png");
+        assert_eq!(fs::read(directory.join("post-1.png")).unwrap(), b"one");
+        assert_eq!(fs::read(directory.join("post-2.png")).unwrap(), b"two");
         fs::remove_dir_all(directory).unwrap();
     }
 }

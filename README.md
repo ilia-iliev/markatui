@@ -17,7 +17,8 @@ markatui -keymap
 Keymap is configurable
 
 
-Copy/paste uses to the machine's clipboard. 
+Copy/paste uses to the machine's clipboard. Ctrl+P pastes whatever is on it: words are typed in, and a picture is written beside the document as `post-1.png`, the block getting an `![](post-1.png)` line with the cursor in the brackets, where the description goes.
+
 
 ## Config
 
@@ -29,21 +30,13 @@ markatui theme dark
 markatui theme terminal  # inherit the terminal's background and text colour
 ```
 
-The foot of the screen — the checker's message, the search bar, the quit prompt — is coloured separately:
-
-```sh
-markatui footer band     # a band of its own, in the palette's prompt colours
-markatui footer invert   # the page's own colours, swapped
-markatui footer paper    # no band: the page's colours as they are
-```
-
-The choice is written to the config file. `markatui -config` opens that file in the editor; what it says is read at the next start. The default is:
+The choice is written to the config file. `markatui -config` opens that file in the editor; what it says is read at the next start, and `markatui -config default` takes the file away again, leaving every setting where it started. The default is:
 
 ```toml
 # How wide the column of text is, in cells. 20 to 500.
 content_width = 72
 theme = "terminal"
-footer = "band"
+footer = "band"          # the foot of the screen: band, invert, or paper
 
 [palette]
 accent = "#C2622F"      # headings

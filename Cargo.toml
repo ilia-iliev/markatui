@@ -19,7 +19,9 @@ pulldown-cmark = "0.13.4"
 # formats are the ones a post is written with; the rest of what `image` reads is weight.
 ratatui-image = { version = "11", default-features = false, features = ["crossterm"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
-arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
+# The clipboard, text and pictures alike: a screenshot pasted in is raw pixels, which
+# `image` above writes back out as the PNG that goes beside the document.
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control", "image-data"] }
 
 [dev-dependencies]
 # The startup measurement opens a pseudo-terminal, which is the one thing the standard

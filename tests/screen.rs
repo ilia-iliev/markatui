@@ -64,6 +64,24 @@ fn drawn_and_resent(
     (rows, resent)
 }
 
+/// A document of its own with the sample picture beside it, so that a test drawing one
+/// disturbs nothing else.
+fn beside_a_picture(name: &str, source: &str) -> std::path::PathBuf {
+    let directory = std::env::temp_dir().join(format!("markatui-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a temporary directory");
+    let path = directory.join("post.md");
+    std::fs::write(&path, source).expect("a document");
+    let sample = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/image.png");
+    std::fs::copy(sample, directory.join("image.png")).expect("a picture beside it");
+    path
+}
+
+/// The document and the picture beside it, once the test is through with them.
+fn forget(path: &std::path::Path) {
+    std::fs::remove_dir_all(path.parent().expect("a directory of its own"))
+        .expect("the temporary directory goes");
+}
+
 fn sample_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/post.md")
 }
@@ -229,12 +247,7 @@ fn sends_the_frame_whole_when_a_picture_moves() {
 /// goes down with it: the block being written in stays where the writer is looking.
 #[test]
 fn takes_the_rows_a_late_picture_adds_off_the_scroll() {
-    let directory = std::env::temp_dir().join(format!("markatui-picture-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).expect("a temporary directory");
-    let path = directory.join("post.md");
-    std::fs::write(&path, "![A picture](image.png)\n\nThe words under it.\n").expect("a document");
-    let sample = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/image.png");
-    std::fs::copy(sample, directory.join("image.png")).expect("a picture beside it");
+    let path = beside_a_picture("late-picture", "![A picture](image.png)\n\nThe words under it.\n");
 
     let mut editor = Editor::open(&path);
     editor.activate(1, 0);
@@ -252,7 +265,28 @@ fn takes_the_rows_a_late_picture_adds_off_the_scroll() {
     }
     // Twelve rows of picture where there was one line naming the file.
     assert_eq!(shift, 11);
-    std::fs::remove_dir_all(directory).expect("the temporary directory goes");
+    forget(&path);
+}
+
+/// A picture the writer left among the words is drawn all the same: it is moved into a
+/// paragraph of its own as the document opens, which is the only place a terminal has the
+/// rows to draw one in.
+#[test]
+fn draws_a_picture_that_was_left_among_the_words() {
+    let path = beside_a_picture("words-picture", "Words ![A picture](image.png) more.\n");
+    let editor = Editor::open(&path);
+    assert_eq!(editor.blocks().len(), 3, "the picture is a paragraph of its own");
+
+    let mut gallery = Gallery::new(Picker::halfblocks(), &path);
+    let mut document = view::Document::default();
+    let (index, rows) = until_the_picture_lands(&editor, &mut document, &mut gallery);
+
+    assert_eq!(index, 1);
+    assert_eq!(document.rows(index).len(), 12, "{rows:#?}");
+    assert!(rows.iter().filter(|row| row.contains('▄')).count() >= 6, "{rows:#?}");
+    assert!(rows.iter().any(|row| row.contains("Words")), "{rows:#?}");
+    assert!(rows.iter().any(|row| row.contains("more.")), "{rows:#?}");
+    forget(&path);
 }
 
 /// Enter opens a line under the one being written and the caret goes down onto it there

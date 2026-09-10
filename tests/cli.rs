@@ -51,11 +51,12 @@ fn theme_command_writes_the_selected_preset_to_config() {
     std::fs::remove_dir_all(config).expect("the temporary config goes");
 }
 
-/// The foot of the screen is set the same way, and the two settings sit side by side in
-/// the config rather than one replacing the other.
+/// A config put back to its defaults is a config that is not there: what the editor
+/// reads then is the defaults themselves. The file it removed is named, because nothing
+/// else the command line does takes a file the writer wrote away.
 #[test]
-fn footer_command_writes_the_chosen_mode_beside_the_theme() {
-    let config = std::env::temp_dir().join(format!("markatui-footer-{}", std::process::id()));
+fn config_default_takes_the_config_away_and_says_which_one() {
+    let config = std::env::temp_dir().join(format!("markatui-reset-{}", std::process::id()));
     let run = |arguments: [&str; 2]| {
         Command::new(env!("CARGO_BIN_EXE_markatui"))
             .args(arguments)
@@ -64,20 +65,35 @@ fn footer_command_writes_the_chosen_mode_beside_the_theme() {
             .expect("markatui runs")
     };
 
-    assert!(run(["theme", "light"]).status.success());
-    let output = run(["footer", "paper"]);
+    assert!(run(["theme", "dark"]).status.success());
+    let written = config.join("markatui/config.toml");
+    assert!(written.exists(), "there is a config to put back");
+
+    let output = run(["-config", "default"]);
+
     assert!(output.status.success(), "{output:?}");
+    assert!(!written.exists(), "the config is still there");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("reset"), "{stdout}");
+    assert!(stdout.contains("config.toml"), "{stdout}");
 
-    let written = std::fs::read_to_string(config.join("markatui/config.toml")).expect("a config");
-    assert_eq!(written, "footer = \"paper\"\ntheme = \"light\"\n");
-
-    let output = run(["footer", "neon"]);
-    assert_eq!(output.status.code(), Some(1));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("band, invert, or paper"),
-        "{output:?}"
-    );
+    // A config that was never there is the state the reset was after, not a failure.
+    assert!(run(["-config", "default"]).status.success());
     std::fs::remove_dir_all(config).expect("the temporary config goes");
+}
+
+/// The foot of the screen is settled in the config file alone now.
+#[test]
+fn the_footer_is_no_longer_a_command_line_setting() {
+    let output = Command::new(env!("CARGO_BIN_EXE_markatui"))
+        .args(["-footer", "paper"])
+        .output()
+        .expect("markatui runs");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown option '-footer'"), "{stderr}");
+    assert!(!stderr.contains("band|invert|paper"), "{stderr}");
 }
 
 #[test]

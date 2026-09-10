@@ -32,6 +32,8 @@ pub enum Action {
     Enter,
     Undo,
     Copy,
+    /// Whatever the clipboard holds: words to type in, or a picture to write beside the
+    /// document and name in the block.
     Paste,
     Surround(&'static str),
     /// `[]()`, or `![]()` for an image.
@@ -71,7 +73,9 @@ pub const COMMANDS: [Command; 19] = [
     Command { section: "Edit", name: "undo", default: "ctrl+z", action: Action::Undo },
     Command { section: "Edit", name: "select_all", default: "ctrl+a", action: Action::SelectAll },
     Command { section: "Edit", name: "copy_selection", default: "ctrl+c", action: Action::Copy },
-    Command { section: "Edit", name: "paste", default: "ctrl+v", action: Action::Paste },
+    // One paste for whatever the clipboard holds, words or picture, so there is no
+    // second key to remember and no key that does nothing when the wrong thing is on it.
+    Command { section: "Edit", name: "paste", default: "ctrl+p", action: Action::Paste },
     Command { section: "Find", name: "find", default: "ctrl+f", action: Action::OpenSearch },
     Command {
         section: "View",
@@ -515,9 +519,11 @@ mod tests {
     }
 
     #[test]
-    fn copies_and_pastes_on_the_keys_every_other_editor_uses() {
+    fn pastes_whatever_the_clipboard_holds_on_one_key() {
         assert_eq!(control(KeyCode::Char('c')), Action::Copy);
-        assert_eq!(control(KeyCode::Char('v')), Action::Paste);
+        assert_eq!(control(KeyCode::Char('p')), Action::Paste);
+        // The one paste took the older key's place, so nothing is left on it.
+        assert_eq!(control(KeyCode::Char('v')), Action::Nothing);
     }
 
     #[test]

@@ -151,6 +151,52 @@ pub fn lone_image(block: &str) -> Option<String> {
 
     path
 }
+/// A paragraph broken up so that every picture the writer left among the words becomes a
+/// paragraph of its own: markdown holds a picture inline, and a terminal has nowhere to
+/// draw one but rows of its own. `None` where there is nothing to move.
+pub fn hoisted_images(block: &str) -> Option<Vec<String>> {
+    let mut pieces = Vec::new();
+    let mut end = 0;
+    for range in loose_images(block) {
+        add_piece(&block[end..range.start], &mut pieces);
+        add_piece(&block[range.clone()], &mut pieces);
+        end = range.end;
+    }
+    add_piece(&block[end..], &mut pieces);
+    (pieces.len() > 1).then_some(pieces)
+}
+
+fn add_piece(part: &str, pieces: &mut Vec<String>) {
+    let part = part.trim();
+    if !part.is_empty() {
+        pieces.push(part.to_string());
+    }
+}
+
+/// Where the pictures a paragraph holds itself sit in its source. Only those move: one in
+/// a heading or a list item would take the block apart, and one inside a link or an
+/// emphasis would leave the markers around it holding nothing.
+fn loose_images(block: &str) -> Vec<Range<usize>> {
+    use pulldown_cmark::Tag;
+
+    let mut ranges = Vec::new();
+    let mut depth = 0usize;
+    for (event, range) in Parser::new_ext(block, options()).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Paragraph) if depth == 0 => depth = 1,
+            Event::Start(_) if depth == 0 => return Vec::new(),
+            Event::Start(Tag::Image { .. }) if depth == 1 => {
+                ranges.push(range);
+                depth += 1;
+            }
+            Event::Start(_) => depth += 1,
+            Event::End(_) => depth -= 1,
+            _ => {}
+        }
+    }
+    ranges
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +311,56 @@ mod tests {
         assert_eq!(kind("---"), Kind::Rule);
         assert_eq!(kind("![alt](pic.png)"), Kind::Image);
         assert_eq!(kind(""), Kind::Paragraph);
+    }
+
+    #[test]
+    fn breaks_a_paragraph_up_round_the_pictures_left_in_it() {
+        assert_eq!(
+            hoisted_images("![a](1.png) after"),
+            Some(vec!["![a](1.png)".into(), "after".into()])
+        );
+        assert_eq!(
+            hoisted_images("before ![a](1.png)"),
+            Some(vec!["before".into(), "![a](1.png)".into()])
+        );
+        assert_eq!(
+            hoisted_images("before ![a](1.png) after"),
+            Some(vec!["before".into(), "![a](1.png)".into(), "after".into()])
+        );
+        assert_eq!(
+            hoisted_images("![a](1.png) ![b](2.png)"),
+            Some(vec!["![a](1.png)".into(), "![b](2.png)".into()])
+        );
+        // A picture on a line of its own inside a paragraph is inline all the same.
+        assert_eq!(
+            hoisted_images("words\n![a](1.png)"),
+            Some(vec!["words".into(), "![a](1.png)".into()])
+        );
+        // What is around a picture keeps its markers.
+        assert_eq!(
+            hoisted_images("**bold** ![a](1.png)"),
+            Some(vec!["**bold**".into(), "![a](1.png)".into()])
+        );
+    }
+
+    /// Only a paragraph's own pictures move. One in a heading or a list would take the
+    /// block apart, and one inside a link or an emphasis would leave the markers around
+    /// it holding nothing.
+    #[test]
+    fn leaves_alone_a_block_with_no_picture_to_move() {
+        for block in [
+            "![alt](pic.png)",
+            "just words",
+            "",
+            "# heading ![a](1.png)",
+            "- item ![a](1.png)",
+            "> quoted ![a](1.png)",
+            "see [![a](1.png)](https://example.com)",
+            "*words ![a](1.png)*",
+            "`![a](1.png)`",
+        ] {
+            assert_eq!(hoisted_images(block), None, "{block:?}");
+        }
     }
 
     #[test]

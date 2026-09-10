@@ -8,7 +8,7 @@ quit = "ctrl+q"
 undo = "ctrl+z"
 select_all = "ctrl+a"
 copy_selection = "ctrl+c"
-paste = "ctrl+v"
+paste = "ctrl+p"
 
 # Find
 find = "ctrl+f"

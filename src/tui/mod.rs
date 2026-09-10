@@ -17,7 +17,8 @@ use crate::active::Step;
 use crate::editor::Editor;
 use crate::lint;
 use crate::state;
-use crate::tui::clipboard::Clipboard;
+use crate::storage;
+use crate::tui::clipboard::{Clipboard, Paste};
 use crate::tui::images::Gallery;
 use crate::tui::keys::Action;
 use crossterm::event::{self, Event};
@@ -44,6 +45,10 @@ const MARGIN: usize = 3;
 /// row of it is now one row out. So the last row is the foot's, and the document ends
 /// above it.
 const FOOT: u16 = 1;
+
+/// What the foot of the screen says when a picture the writer left among the words has
+/// been broken out into a paragraph of its own.
+const HOISTED: &str = "Inline images are not supported: moved to a paragraph";
 
 /// The three modes the writer can be in, each with the word it is written down as between
 /// runs and the two flags it means. The plain mode is first, and so is what an unreadable
@@ -103,7 +108,9 @@ pub fn run(path: &Path) -> io::Result<()> {
     // The picker is asked for once the screen is ours: the terminal answers the question
     // by writing to it, and this way it is our screen that gets written on.
     let mut app = App::open(path, Gallery::new(probe::pictures(), path));
-    app.notice = notice;
+    // Whatever the config could not read goes first: it is the older news of the two, and
+    // the writer will want to hear it before anything the document did on the way in.
+    app.notice.splice(..0, notice);
 
     let result = app.loop_until_quit(&mut terminal);
     terminal::stop(capabilities, background)?;
@@ -133,7 +140,17 @@ impl App {
         if let Some(word) = state::recall_mode() {
             app.set_mode(&word);
         }
+        app.note_hoisted();
         app
+    }
+
+    /// A picture broken out of the words around it is the writer's document being changed
+    /// under them, so the foot of the screen says so — until the next keystroke, which is
+    /// how long every notice lasts.
+    fn note_hoisted(&mut self) {
+        if self.editor.take_hoisted() {
+            self.notice.push(HOISTED.to_string());
+        }
     }
 
     /// The mode as the one word it is written down as.
@@ -218,6 +235,7 @@ impl App {
             Mode::Muting(_) => self.act_muting(action),
             Mode::Editing => self.act_editing(action),
         }
+        self.note_hoisted();
     }
 
     fn act_editing(&mut self, action: Action) {
@@ -351,14 +369,31 @@ impl App {
         self.clipboard.copy(selected);
     }
 
-    /// Paste, which is a typing of what the clipboard holds: the same path a terminal's
-    /// own paste takes, so a selection under it is replaced either way.
     fn paste(&mut self) {
-        let text = self.clipboard.paste();
-        if text.is_empty() {
-            return;
+        let content = self.clipboard.content();
+        self.paste_content(content);
+    }
+
+    /// Put in what the clipboard was holding. Words are typed, which is the path a
+    /// terminal's own paste takes, so a selection under them is replaced either way.
+    fn paste_content(&mut self, content: Paste) {
+        match content {
+            Paste::Words(words) => self.edit(|editor| editor.insert(&words)),
+            Paste::Picture(png) => self.paste_picture(&png),
+            Paste::Nothing => {}
         }
-        self.edit(|editor| editor.insert(&text));
+    }
+
+    /// A picture, which markdown has no way of holding: it is written beside the document
+    /// as a PNG of its own, and what goes into the block is the line naming that file.
+    fn paste_picture(&mut self, png: &[u8]) {
+        match storage::write_picture(self.editor.path(), png) {
+            Ok(file) => {
+                self.editor.error = None;
+                self.edit(|editor| editor.insert_picture(&file));
+            }
+            Err(error) => self.editor.error = Some(format!("Could not save the picture: {error}")),
+        }
     }
 
     /// Ctrl+Q, Esc or Ctrl+D. A document with unsaved work asks first, with the three
@@ -595,6 +630,80 @@ mod tests {
         if let Some(held) = held {
             state::remember_mode(&held);
         }
+        forget(&path);
+    }
+
+    /// The one paste key takes whatever the clipboard was holding. Words are typed in
+    /// where the cursor is, the same as a terminal's own paste.
+    #[test]
+    fn pastes_the_words_on_the_clipboard() {
+        let path = document("paste-words", "A document.");
+        let mut app = app(&path);
+
+        app.paste_content(Paste::Words("Words. ".into()));
+
+        assert_eq!(app.editor.block(0), "Words. A document.");
+        forget(&path);
+    }
+
+    /// And a picture, which markdown cannot hold, becomes a file beside the document and
+    /// a line naming it, with the cursor between the brackets for its description.
+    #[test]
+    fn pastes_the_picture_on_the_clipboard() {
+        let path = document("paste-picture", "A document.");
+        let mut app = app(&path);
+        let png = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/image.png"))
+            .expect("the sample picture");
+
+        app.paste_content(Paste::Picture(png.clone()));
+
+        assert_eq!(app.editor.block(0), "![](post-1.png)A document.");
+        assert_eq!(app.editor.active().cursor(), 2, "the cursor is not where the words go");
+        let beside = path.parent().expect("a directory of its own").join("post-1.png");
+        assert_eq!(std::fs::read(beside).ok(), Some(png), "the picture was not written");
+        forget(&path);
+    }
+
+    /// A clipboard with nothing on it is a key that does nothing, not an empty paste.
+    #[test]
+    fn pastes_nothing_from_an_empty_clipboard() {
+        let path = document("paste-nothing", "A document.");
+        let mut app = app(&path);
+
+        app.paste_content(Paste::Nothing);
+
+        assert_eq!(app.editor.block(0), "A document.");
+        assert!(!app.editor.dirty(), "an empty paste counted as an edit");
+        forget(&path);
+    }
+
+    /// A picture left among the words is moved into a paragraph of its own as the
+    /// document opens — a terminal has nowhere to draw one inside a line — and the foot of
+    /// the screen says so until the next keystroke.
+    #[test]
+    fn says_when_a_picture_was_moved_out_of_the_words() {
+        let path = document("inline-picture", "Words ![A picture](image.png) more.\n");
+        let mut app = app(&path);
+        let mut terminal = Terminal::new(TestBackend::new(90, 12)).expect("a test screen");
+
+        assert_eq!(app.footer(90), [HOISTED.to_string()]);
+        let rows = frame(&mut app, &mut terminal);
+        assert!(rows.iter().any(|row| row.contains(HOISTED)), "{rows:#?}");
+        assert_eq!(app.editor.block(1), "![A picture](image.png)");
+
+        // Read and gone: the writer touches a key and the band is the document's again.
+        app.press(event::KeyEvent::new(event::KeyCode::Right, event::KeyModifiers::NONE));
+        assert!(app.footer(90).is_empty());
+        forget(&path);
+    }
+
+    /// And a document with nothing to move says nothing.
+    #[test]
+    fn says_nothing_where_no_picture_had_to_move() {
+        let path = document("no-inline-picture", "![A picture](image.png)\n\nWords.\n");
+        let app = app(&path);
+
+        assert!(app.footer(90).is_empty());
         forget(&path);
     }
 

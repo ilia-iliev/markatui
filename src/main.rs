@@ -8,16 +8,15 @@ const HELP: &str = "Usage:
   markatui -checks
   markatui -checks on|off <check>
   markatui theme light|dark|terminal
-  markatui footer band|invert|paper
   markatui -config
+  markatui -config default
 
 Available options:
   -h, --help  Print help
   -keymap     List the keys, or bind one to a command
   -checks     List the writing checks, or turn one on or off
   -theme      Set light, dark, or terminal colours
-  -footer     Set how the foot of the screen is coloured
-  -config     Edit the config file";
+  -config     Edit the config file, or put it back to its defaults";
 
 fn main() {
     let mut arguments = std::env::args().skip(1);
@@ -32,8 +31,6 @@ fn main() {
         first = path;
     } else if first == "theme" {
         return report(theme(arguments));
-    } else if first == "footer" {
-        return report(footer(arguments));
     } else if let Some(flag) = flag(&first) {
         match flag {
             "h" | "help" => {
@@ -43,7 +40,6 @@ fn main() {
             "checks" => return report(checks(arguments)),
             "keymap" => return report(keymap(arguments)),
             "theme" => return report(theme(arguments)),
-            "footer" => return report(footer(arguments)),
             "config" => return config(arguments),
             _ => invalid_option(&first),
         }
@@ -72,27 +68,26 @@ fn checks(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
 }
 
 /// The writer's own config, opened in the editor like any other file. It is theirs to
-/// edit, and what it says is read at the next start, not this one.
+/// edit, and what it says is read at the next start, not this one. `default` puts it back
+/// to the settings it had before they set any, which is said out loud: nothing else is
+/// removing a file they wrote.
 fn config(mut arguments: impl Iterator<Item = String>) {
-    if arguments.next().is_some() {
-        usage();
-    }
-    match tui::config::path() {
-        Ok(path) => open(&path),
-        Err(error) => fail(&error),
+    match (arguments.next(), arguments.next()) {
+        (None, None) => match tui::config::path() {
+            Ok(path) => open(&path),
+            Err(error) => fail(&error),
+        },
+        (Some(word), None) if word == "default" => match tui::config::reset() {
+            Ok(path) => println!("reset {}", path.display()),
+            Err(error) => fail(&error),
+        },
+        _ => usage(),
     }
 }
 
 fn theme(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
     match (arguments.next(), arguments.next()) {
         (Some(name), None) => tui::config::set_theme(&name),
-        _ => usage(),
-    }
-}
-
-fn footer(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
-    match (arguments.next(), arguments.next()) {
-        (Some(name), None) => tui::config::set_footer(&name),
         _ => usage(),
     }
 }

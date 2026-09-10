@@ -302,6 +302,15 @@ impl Active {
         });
     }
 
+    /// `![|](file)`: a picture already written to disk, over whatever was selected, with
+    /// the cursor between the brackets where its description goes.
+    pub fn insert_picture(&mut self, file: &str) {
+        let (start, end) = self.selection().unwrap_or((self.cursor, self.cursor));
+        self.replace(start, end, &format!("![]({file})"));
+        self.anchor = None;
+        self.place(start + 2);
+    }
+
     /// Put a suggestion the checker offered where it objected, leaving the cursor at the
     /// end of it. One edit rather than a delete and an insert, so one undo takes it back.
     pub fn accept(&mut self, at: usize, len: usize, replacement: &str) {
@@ -477,6 +486,19 @@ x",
         let mut empty = at("go ", 3);
         empty.insert_link("!");
         assert_eq!(shown(&empty), "go ![|]()");
+    }
+
+    #[test]
+    fn writes_a_pasted_picture_in_with_room_for_its_description() {
+        let mut active = at("see ", 4);
+        active.insert_picture("post-1.png");
+        assert_eq!(shown(&active), "see ![|](post-1.png)");
+
+        // A paste goes over the selection, the same as a paste of words does.
+        let mut over = at("see this", 4);
+        over.select(4, 8);
+        over.insert_picture("post-1.png");
+        assert_eq!(shown(&over), "see ![|](post-1.png)");
     }
 
     #[test]

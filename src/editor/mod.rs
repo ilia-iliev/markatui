@@ -47,6 +47,9 @@ pub struct Editor {
     /// Whether the typing has stopped. Nothing is said about a block while it is being
     /// typed into — a word half-written is not a word spelled wrong.
     settled: bool,
+    /// Whether a picture the writer left among the words has been broken out into a
+    /// paragraph of its own since the screen last looked. The foot of the screen says so.
+    hoisted: bool,
     path: PathBuf,
     pub error: Option<String>,
     pub lint: LintState,
@@ -62,29 +65,43 @@ impl Editor {
         } else {
             std::env::current_dir().unwrap_or_default().join(path)
         };
-        let (segments, error) = match fs::read_to_string(&path) {
-            Ok(source) => (parse::segments(&source), None),
-            Err(error) if error.kind() == ErrorKind::NotFound => (parse::segments(""), None),
+        let (source, error) = match fs::read_to_string(&path) {
+            Ok(source) => (source, None),
+            Err(error) if error.kind() == ErrorKind::NotFound => (String::new(), None),
             Err(error) => {
-                (parse::segments(""), Some(format!("Could not open {}: {error}", path.display())))
+                (String::new(), Some(format!("Could not open {}: {error}", path.display())))
             }
         };
 
-        let blocks: Vec<Arc<String>> = segments.blocks.into_iter().map(Arc::new).collect();
-        let last = blocks.len() - 1;
+        let mut editor = Editor::read(&source, path, error);
+        let last = editor.blocks.len() - 1;
         // Pick up where the last session left off in this file, or at its end.
-        let index = state::recall(&path).unwrap_or(last).min(last);
+        editor.settle_in(state::recall(&editor.path).unwrap_or(last).min(last));
+        editor.record_cursor();
+        editor
+    }
+
+    /// A document made out of `source`. Any picture the writer left among the words is
+    /// broken out into a paragraph of its own before the cursor ever reaches the block it
+    /// was left in: that is where a terminal can draw it, and the writer opened the file
+    /// to look at the picture. The document then says something the file does not, which
+    /// is why it opens with work to save.
+    fn read(source: &str, path: PathBuf, error: Option<String>) -> Self {
+        let mut segments = parse::segments(source);
+        let hoisted = blocks::hoist_document(&mut segments);
+        let blocks: Vec<Arc<String>> = segments.blocks.into_iter().map(Arc::new).collect();
         let mut editor = Editor {
-            active: Active::new(&blocks[index], usize::MAX),
+            active: Active::new(&blocks[0], usize::MAX),
             blocks,
             gaps: segments.gaps.into_iter().map(Arc::new).collect(),
-            index,
+            index: 0,
             anchor: None,
             undo: VecDeque::new(),
-            revision: 0,
+            revision: u64::from(hoisted),
             saved_revision: 0,
             edit_run: None,
             settled: true,
+            hoisted,
             path,
             error,
             lint: LintState::default(),
@@ -114,6 +131,13 @@ impl Editor {
 
     pub fn dirty(&self) -> bool {
         self.revision != self.saved_revision
+    }
+
+    /// Whether a picture has been broken out of the words around it since this was last
+    /// asked. The foot of the screen hears about it once, and shows it until the writer
+    /// presses the next key.
+    pub fn take_hoisted(&mut self) -> bool {
+        std::mem::take(&mut self.hoisted)
     }
 
     /// The source of block `index` as the view should draw it: the block being edited is
@@ -189,8 +213,12 @@ impl Editor {
         }
         let (before, after) = self.active.split();
         let (mut split, mut separators) = blocks::replacement(&before);
+        self.hoist(&mut split, &mut separators);
+        // Counted after the hoist: what the cursor moves on by is however many blocks the
+        // half in front of it came to.
         let head = split.len();
-        let (tail, tail_separators) = blocks::replacement(&after);
+        let (mut tail, mut tail_separators) = blocks::replacement(&after);
+        self.hoist(&mut tail, &mut tail_separators);
         separators.push("\n\n".to_string());
         separators.extend(tail_separators);
         split.extend(tail);
@@ -247,6 +275,14 @@ impl Editor {
         self.record_edit();
     }
 
+    /// A picture that has just been written beside the document, named by the block it
+    /// goes in.
+    pub fn insert_picture(&mut self, file: &str) {
+        self.clear_spanning_selection();
+        self.active.insert_picture(file);
+        self.record_edit();
+    }
+
     /// A selection that has left this block is let go before an edit that only makes
     /// sense inside one: there is no wrapping a marker round several blocks.
     fn clear_spanning_selection(&mut self) {
@@ -269,11 +305,21 @@ impl Editor {
             self.remove_blocks(self.index, 1);
             return -1;
         }
-        let (replacement, separators) = blocks::replacement(&block);
+        let (mut replacement, mut separators) = blocks::replacement(&block);
+        self.hoist(&mut replacement, &mut separators);
         if replacement.len() == 1 && replacement[0] == *block {
             return 0;
         }
         self.replace_block(self.index, replacement, separators)
+    }
+
+    /// Break out any picture the writer left among the words: a terminal draws a picture
+    /// into rows of its own, so a paragraph holding one becomes a paragraph for the words
+    /// and a paragraph for the picture. It happens as the cursor leaves the block, which
+    /// is when the picture would be drawn — while the block is being written in, what was
+    /// typed stays where it was typed.
+    fn hoist(&mut self, blocks: &mut Vec<String>, separators: &mut Vec<String>) {
+        self.hoisted |= blocks::hoist_images(blocks, separators);
     }
 
     /// Swap block `index` for the blocks it re-parsed into.
@@ -344,26 +390,13 @@ mod tests {
     use super::*;
     use crate::lint;
 
-    /// A document made without touching the disk. The path is never written to.
+    /// A document made without touching the disk, opened the way a file is. The path is
+    /// never written to, and the cursor starts at the top rather than wherever some other
+    /// session left it. Nothing has settled: the checker has its say once a test asks.
     fn document(source: &str) -> Editor {
-        let segments = parse::segments(source);
-        let blocks: Vec<Arc<String>> = segments.blocks.into_iter().map(Arc::new).collect();
-        let mut editor = Editor {
-            active: Active::new(&blocks[0], 0),
-            blocks,
-            gaps: segments.gaps.into_iter().map(Arc::new).collect(),
-            index: 0,
-            anchor: None,
-            undo: VecDeque::new(),
-            revision: 0,
-            saved_revision: 0,
-            edit_run: None,
-            settled: false,
-            path: PathBuf::from("/nowhere/post.md"),
-            error: None,
-            lint: LintState::default(),
-            search: SearchState::default(),
-        };
+        let mut editor = Editor::read(source, PathBuf::from("/nowhere/post.md"), None);
+        editor.settled = false;
+        editor.active.place(0);
         editor.record_cursor();
         editor
     }
@@ -430,6 +463,68 @@ mod tests {
         }
         editor.activate(1, 0);
         assert_eq!(texts(&editor), ["two"]);
+    }
+
+    /// A terminal draws a picture into rows of its own, so a picture left among the words
+    /// is broken out into a paragraph of its own the moment the document is read — before
+    /// the writer ever sees the block it was left in.
+    #[test]
+    fn breaks_out_a_picture_left_inline_as_the_document_opens() {
+        let editor = document("words ![a](1.png) more\n\nplain\n");
+        assert_eq!(texts(&editor), ["words", "![a](1.png)", "more", "plain"]);
+        assert_eq!(editor.source(), "words\n\n![a](1.png)\n\nmore\n\nplain\n");
+        // The document no longer says what the file says, and the writer is told so.
+        assert!(editor.dirty());
+        assert!(editor.hoisted);
+    }
+
+    #[test]
+    fn says_nothing_about_a_document_with_no_picture_to_move() {
+        let editor = document("![a](1.png)\n\nplain");
+        assert!(!editor.hoisted);
+        assert!(!editor.dirty());
+    }
+
+    /// A picture typed among the words is left where it was typed while the block is being
+    /// written in — the alt text is typed after the file name — and is broken out when the
+    /// cursor leaves, which is when the picture would be drawn.
+    #[test]
+    fn breaks_out_a_picture_typed_inline_when_the_cursor_leaves_the_block() {
+        let mut editor = document("words\n\nplain");
+        editor.activate(0, 5);
+        editor.insert(" ![a](1.png)");
+        assert_eq!(texts(&editor), ["words ![a](1.png)", "plain"]);
+        assert!(!editor.hoisted);
+
+        editor.activate(1, 0);
+        assert_eq!(texts(&editor), ["words", "![a](1.png)", "plain"]);
+        assert!(editor.hoisted);
+        // The cursor keeps to the block it was sent to, wherever the split moved it.
+        assert_eq!(editor.index(), 2);
+        assert_eq!(editor.block(editor.index()), "plain");
+    }
+
+    /// Enter breaks a block in two, and a picture left among the words of either half is
+    /// broken out with it. The cursor still lands at the start of the second half.
+    #[test]
+    fn breaks_out_a_picture_left_inline_by_a_split() {
+        let mut editor = document("one two");
+        editor.activate(0, 3);
+        editor.insert(" ![a](1.png)");
+        editor.enter();
+        editor.enter();
+        assert_eq!(texts(&editor), ["one", "![a](1.png)", " two"]);
+        assert_eq!(editor.index(), 2);
+        assert!(editor.hoisted);
+    }
+
+    /// The screen asks once and hears once: the message is the foot of the screen's to
+    /// show until the next keystroke, not something it is told again on every frame.
+    #[test]
+    fn says_a_picture_moved_only_once() {
+        let mut editor = document("words ![a](1.png)");
+        assert!(editor.take_hoisted());
+        assert!(!editor.take_hoisted());
     }
 
     #[test]

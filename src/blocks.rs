@@ -85,6 +85,37 @@ pub fn replacement(source: &str) -> (Vec<String>, Vec<String>) {
     (blocks, separators)
 }
 
+/// What goes between two blocks broken apart: a blank line, which is what a paragraph
+/// ends with wherever the writer has not said otherwise.
+const PARAGRAPH: &str = "\n\n";
+
+/// Every picture the writer left among the words of a paragraph broken out into a
+/// paragraph of its own, blocks and the separators between them together. `false` where
+/// nothing had to move.
+pub fn hoist_images(blocks: &mut Vec<String>, separators: &mut Vec<String>) -> bool {
+    let mut moved = false;
+    // From the back, so that a block breaking into several leaves the ones still to be
+    // looked at where they were.
+    for index in (0..blocks.len()).rev() {
+        let Some(pieces) = parse::hoisted_images(&blocks[index]) else { continue };
+        separators.splice(index..index, vec![PARAGRAPH.to_string(); pieces.len() - 1]);
+        blocks.splice(index..index + 1, pieces);
+        moved = true;
+    }
+    moved
+}
+
+/// The same over a whole document, whose gaps carry the source outside the blocks as well
+/// as the source between them. What is around the outside is left alone: it is what keeps
+/// a file that was only read coming back the way it was found.
+pub fn hoist_document(segments: &mut parse::Segments) -> bool {
+    let last = segments.gaps.len() - 1;
+    let mut separators: Vec<String> = segments.gaps.drain(1..last).collect();
+    let moved = hoist_images(&mut segments.blocks, &mut separators);
+    segments.gaps.splice(1..1, separators);
+    moved
+}
+
 /// The document as it would be written out: the blocks with their gaps back between them.
 pub fn source(blocks: &[Arc<String>], gaps: &[Arc<String>]) -> String {
     let length = blocks.iter().map(|block| block.len()).sum::<usize>()
@@ -189,6 +220,34 @@ mod tests {
         let (blocks, separators) = replacement("one\n\ntwo\n\nthree");
         assert_eq!(blocks, ["one", "two", "three"]);
         assert_eq!(separators, ["\n\n", "\n\n"]);
+    }
+
+    #[test]
+    fn breaks_the_pictures_out_of_the_blocks_they_were_left_in() {
+        let mut blocks = vec!["one ![a](1.png) two".to_string(), "plain".to_string()];
+        let mut separators = vec!["\n\n".to_string()];
+        assert!(hoist_images(&mut blocks, &mut separators));
+        assert_eq!(blocks, ["one", "![a](1.png)", "two", "plain"]);
+        assert_eq!(separators, ["\n\n", "\n\n", "\n\n"]);
+    }
+
+    #[test]
+    fn leaves_a_document_with_no_picture_to_move_as_it_was() {
+        let mut blocks = vec!["![a](1.png)".to_string(), "plain".to_string()];
+        let mut separators = vec!["\n\n\n".to_string()];
+        assert!(!hoist_images(&mut blocks, &mut separators));
+        assert_eq!(blocks, ["![a](1.png)", "plain"]);
+        assert_eq!(separators, ["\n\n\n"]);
+    }
+
+    /// The gaps around the outside of the document are none of the hoist's business: they
+    /// are what keeps a file that is only read from coming back the way it was found.
+    #[test]
+    fn keeps_the_gaps_at_the_ends_of_the_document_while_hoisting() {
+        let mut segments = parse::segments("\n\nwords ![a](1.png)\n\nplain\n");
+        assert!(hoist_document(&mut segments));
+        assert_eq!(segments.blocks, ["words", "![a](1.png)", "plain"]);
+        assert_eq!(segments.gaps, ["\n\n", "\n\n", "\n\n", "\n"]);
     }
 
     /// Whitespace at the ends of a block belongs to the block: the writer can still
