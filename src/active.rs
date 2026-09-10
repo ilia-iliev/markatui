@@ -20,11 +20,15 @@ pub struct Active {
     /// The column a run of up-and-down movement is aiming for, so that passing through a
     /// short line does not drag the cursor in to its end for good.
     goal: Option<usize>,
+    /// Whether deletion took the last content out of this block. An empty block that was
+    /// opened by Enter is intentional; one emptied by Backspace or Delete can go.
+    emptied: bool,
 }
 
 impl Active {
     pub fn new(text: &str, cursor: usize) -> Self {
-        let mut active = Active { text: text.to_string(), cursor: 0, anchor: None, goal: None };
+        let mut active =
+            Active { text: text.to_string(), cursor: 0, anchor: None, goal: None, emptied: false };
         active.place(cursor);
         active
     }
@@ -43,6 +47,10 @@ impl Active {
 
     pub fn length(&self) -> usize {
         length(&self.text)
+    }
+
+    pub fn emptied(&self) -> bool {
+        self.emptied
     }
 
     /// Where the block's own selection runs, in characters, if one does. Empty where the
@@ -207,28 +215,32 @@ impl Active {
         self.replace(start, end, insert);
         self.place(start + length(insert));
         self.anchor = None;
+        self.emptied = false;
     }
 
     /// Take out the character the cursor is standing against, or the selection where
     /// there is one. `false` where there is nothing to take out on that side, which the
     /// document reads as a merge or a nothing.
     pub fn delete(&mut self, step: Step) -> bool {
-        if let Some((start, end)) = self.selection() {
-            self.replace(start, end, "");
-            self.place(start);
-            self.anchor = None;
-            return true;
-        }
-        let (start, end) = if step > 0 {
-            (self.cursor, self.neighbour(self.cursor, 1))
-        } else {
-            (self.neighbour(self.cursor, -1), self.cursor)
-        };
+        let selection = self.selection();
+        let (start, end) = selection.unwrap_or_else(|| {
+            if step > 0 {
+                (self.cursor, self.neighbour(self.cursor, 1))
+            } else {
+                (self.neighbour(self.cursor, -1), self.cursor)
+            }
+        });
         if start == end {
             return false;
         }
+
+        let had_content = !self.text.trim().is_empty();
         self.replace(start, end, "");
         self.place(start);
+        if selection.is_some() {
+            self.anchor = None;
+        }
+        self.emptied |= had_content && self.text.trim().is_empty();
         true
     }
 

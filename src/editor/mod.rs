@@ -411,8 +411,9 @@ impl Editor {
     fn commit(&mut self) -> isize {
         self.store_active();
         let block = self.blocks[self.index].clone();
-        // A block emptied out disappears, unless it is all that is left.
-        if block.trim().is_empty() {
+        // A block whose content was deleted disappears, unless it is all that is left.
+        // Empty blocks opened by Enter are the writer's blank lines and stay put.
+        if self.active.emptied() && block.trim().is_empty() {
             if self.blocks.len() == 1 {
                 return 0;
             }
@@ -724,6 +725,23 @@ mod tests {
         }
         editor.activate(1, 0);
         assert_eq!(texts(&editor), ["two"]);
+    }
+
+    #[test]
+    fn keeps_inserted_blank_lines_as_the_cursor_walks_through_them() {
+        let mut editor = document("one");
+        editor.activate(0, 3);
+        for _ in 0..10 {
+            editor.enter();
+        }
+        let source = editor.source();
+
+        for step in [-1, 1] {
+            for _ in 0..5 {
+                editor.move_cursor(Motion::Line(step), false);
+                assert_eq!(editor.source(), source);
+            }
+        }
     }
 
     /// A terminal draws a picture into rows of its own, so a picture left among the words
