@@ -42,13 +42,25 @@ To turn off types of checks, use `alt+g`
 
 Written against foot; Alacritty and kitty could work too. Pictures and the shifted keys are what a terminal has to answer for.
 
-## Build
+## Install from source (Linux)
+
+Rust 1.95 or newer is required. From a checkout, the installer builds a release binary,
+puts it in `~/.local/bin`, and registers its desktop entry:
 
 ```sh
-packaging/install.sh
+./packaging/install.sh
 ```
 
-Rust 1.95 or newer
+Set `PREFIX` to choose another installation root. The script asks before installing or
+replacing the command and before making markatui the default Markdown application.
+
+For a command-line-only installation, use Cargo directly:
+
+```sh
+cargo install --path . --locked
+```
+
+Prebuilt release binaries and distribution packages are not currently provided.
 
 ## License
 

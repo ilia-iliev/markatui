@@ -2,6 +2,12 @@
 name = "markatui"
 version = "0.1.0"
 edition = "2024"
+description = "A keyboard-first Markdown editor for the terminal"
+license = "MIT"
+repository = "https://github.com/ilia-iliev/markatui"
+readme = "README.md"
+keywords = ["markdown", "editor", "terminal", "tui"]
+categories = ["command-line-utilities", "text-editors"]
 # harper-core needs a compiler that infers an array of function items as the pointer type
 # the call expects; 1.92 does not, and stops with a type error inside harper itself.
 rust-version = "1.95"

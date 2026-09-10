@@ -1,10 +1,14 @@
 #!/bin/sh
-# Build markatui and put it on the path. Static against musl where that target is
-# installed, so the binary is one file that runs on any Linux of the same architecture;
-# against this system's libc where it is not.
+# Build markatui and install it for the current Linux user. Use a statically linked
+# musl binary when the matching Rust target is available; otherwise use the native target.
 set -eu
 
 cd "$(dirname "$0")/.."
+
+if [ "$(uname -s)" != Linux ]; then
+    echo "markatui: this installer supports Linux only" >&2
+    exit 1
+fi
 
 prefix=${PREFIX:-$HOME/.local}
 destination="$prefix/bin/markatui"
@@ -19,7 +23,12 @@ confirm() {
     esac
 }
 
-if [ ! -e "$destination" ] && ! confirm "Install markatui in $prefix/bin?"; then
+if [ -e "$destination" ] || [ -L "$destination" ]; then
+    question="Replace $destination?"
+else
+    question="Install markatui in $prefix/bin?"
+fi
+if ! confirm "$question"; then
     echo "markatui: installation cancelled"
     exit 1
 fi
@@ -35,38 +44,38 @@ fi
 install -D -m 755 "$binary" "$destination"
 echo "markatui: installed $destination"
 
-config_home=${XDG_CONFIG_HOME:-$HOME/.config}
-keymap="$config_home/markatui/keymap.toml"
-if [ ! -e "$keymap" ]; then
-    install -D -m 644 assets/keymap.toml "$keymap"
-    echo "markatui: installed $keymap"
-fi
-
-markdown_default=
-if command -v xdg-mime >/dev/null 2>&1; then
-    markdown_default=$(xdg-mime query default text/markdown) || markdown_default=
-fi
-
-if [ "$markdown_default" != markatui.desktop ] &&
-    confirm "Use markatui as the default application for .md files?"; then
-    if command -v xdg-mime >/dev/null 2>&1; then
-        data_home=${XDG_DATA_HOME:-$HOME/.local/share}
-        desktop="$data_home/applications/markatui.desktop"
-        mkdir -p "$(dirname "$desktop")"
-        cat > "$desktop" <<EOF
+# Register the application independently of whether the user makes it their default.
+# An Exec argument has its own quoting rules: quote the path, escape its reserved
+# characters, and double percent signs so they are not interpreted as field codes.
+desktop_exec=$(printf '%s' "$destination" | sed \
+    -e 's/\\/\\\\\\\\/g' \
+    -e 's/"/\\"/g' \
+    -e 's/`/\\`/g' \
+    -e 's/\$/\\$/g' \
+    -e 's/%/%%/g')
+data_home=${XDG_DATA_HOME:-$HOME/.local/share}
+desktop="$data_home/applications/markatui.desktop"
+mkdir -p "$(dirname "$desktop")"
+cat > "$desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=markatui
-Exec=$destination %f
+Exec="$desktop_exec" %f
 Terminal=true
 MimeType=text/markdown;
 EOF
-        chmod 644 "$desktop"
+chmod 644 "$desktop"
+echo "markatui: installed $desktop"
+
+if command -v xdg-mime >/dev/null 2>&1; then
+    markdown_default=$(xdg-mime query default text/markdown) || markdown_default=
+    if [ "$markdown_default" != markatui.desktop ] &&
+        confirm "Use markatui as the default application for .md files?"; then
         xdg-mime default markatui.desktop text/markdown
         echo "markatui: set as the default application for .md files"
-    else
-        echo "markatui: xdg-mime is unavailable; the default was not changed" >&2
     fi
+else
+    echo "markatui: xdg-mime is unavailable; the Markdown default was not changed" >&2
 fi
 
 case ":$PATH:" in

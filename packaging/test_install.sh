@@ -37,7 +37,7 @@ run_installer() {
     set +e
     printf '%b' "$input" | env \
         HOME="$tmp/home" \
-        PREFIX="$tmp/prefix" \
+        PREFIX="${INSTALL_PREFIX:-$tmp/prefix}" \
         XDG_CONFIG_HOME="$tmp/config" \
         XDG_DATA_HOME="$tmp/data" \
         XDG_MIME_LOG="$tmp/xdg-mime.log" \
@@ -62,7 +62,8 @@ run_installer 'n\n' "$tmp/refused.out"
 assert_contains "$tmp/refused.out" "Install markatui in $tmp/prefix/bin?"
 [ ! -e "$tmp/prefix/bin/markatui" ] || fail "binary was installed after refusal"
 
-# Accepting the destination installs it and asks about the Markdown file association.
+# Accepting the destination installs it, registers the application, and asks before
+# changing the Markdown default.
 run_installer 'y\nn\n' "$tmp/accepted.out"
 [ "$status" -eq 0 ] || fail "accepted installation failed"
 [ -x "$tmp/prefix/bin/markatui" ] || fail "binary was not installed"
@@ -70,30 +71,39 @@ assert_contains "$tmp/accepted.out" "Use markatui as the default application for
 if [ -e "$tmp/xdg-mime.log" ] && grep -F "default markatui.desktop text/markdown" "$tmp/xdg-mime.log" >/dev/null; then
     fail "declining changed the Markdown default"
 fi
+desktop="$tmp/data/applications/markatui.desktop"
+[ -f "$desktop" ] || fail "desktop entry was not installed"
+assert_contains "$desktop" "Exec=\"$tmp/prefix/bin/markatui\" %f"
+assert_contains "$desktop" "MimeType=text/markdown;"
+[ ! -e "$tmp/config/markatui/keymap.toml" ] || fail "installer wrote application-owned config"
 
-# An update does not ask for the already confirmed destination. It can set the default.
+# An existing command is never overwritten without confirmation.
+cp "$tmp/prefix/bin/markatui" "$tmp/before-refusal"
+run_installer 'n\n' "$tmp/update-refused.out"
+[ "$status" -ne 0 ] || fail "refusing an update should stop"
+cmp "$tmp/before-refusal" "$tmp/prefix/bin/markatui" >/dev/null ||
+    fail "existing binary changed after refusal"
+assert_contains "$tmp/update-refused.out" "Replace $tmp/prefix/bin/markatui?"
+
+# An accepted update can set the default.
 : > "$tmp/xdg-mime.log"
-run_installer 'y\n' "$tmp/update.out"
+run_installer 'y\ny\n' "$tmp/update.out"
 [ "$status" -eq 0 ] || fail "update failed"
-if grep -F "Install markatui in" "$tmp/update.out" >/dev/null; then
-    fail "update asked to confirm its destination"
-fi
 assert_contains "$tmp/update.out" "Use markatui as the default application for .md files?"
 grep -Fx "default markatui.desktop text/markdown" "$tmp/xdg-mime.log" >/dev/null ||
     fail "Markdown default was not set"
-desktop="$tmp/data/applications/markatui.desktop"
-[ -f "$desktop" ] || fail "desktop entry was not installed"
-assert_contains "$desktop" "Exec=$tmp/prefix/bin/markatui %f"
-assert_contains "$desktop" "MimeType=text/markdown;"
 
-# Do not ask when markatui is already the Markdown default.
+# Register a changed, safely quoted command even when markatui is already the default.
 : > "$tmp/xdg-mime.log"
 export CURRENT_MARKDOWN_DEFAULT=markatui.desktop
-run_installer '' "$tmp/already-default.out"
-[ "$status" -eq 0 ] || fail "update with existing Markdown default failed"
+INSTALL_PREFIX="$tmp/new prefix"
+export INSTALL_PREFIX
+run_installer 'y\n' "$tmp/already-default.out"
+[ "$status" -eq 0 ] || fail "install at changed prefix failed"
 if grep -F "Use markatui as the default" "$tmp/already-default.out" >/dev/null; then
     fail "asked to replace an existing markatui Markdown default"
 fi
+assert_contains "$desktop" "Exec=\"$INSTALL_PREFIX/bin/markatui\" %f"
 grep -Fx "query default text/markdown" "$tmp/xdg-mime.log" >/dev/null ||
     fail "existing Markdown default was not checked"
 
