@@ -138,6 +138,18 @@ pub fn link_at(block: &str, at: usize) -> Option<String> {
     })
 }
 
+/// Every image destination in Markdown source, in document order.
+pub fn image_paths(source: &str) -> Vec<String> {
+    use pulldown_cmark::Tag;
+
+    Parser::new_ext(source, options())
+        .filter_map(|event| match event {
+            Event::Start(Tag::Image { dest_url, .. }) => Some(dest_url.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The image path of a block that is a lone `![alt](path)` paragraph, if any.
 pub fn lone_image(block: &str) -> Option<String> {
     use pulldown_cmark::{Tag, TagEnd};

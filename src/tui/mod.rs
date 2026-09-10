@@ -17,6 +17,7 @@ pub mod view;
 use crate::active::Step;
 use crate::editor::{Editor, Field};
 use crate::lint;
+use crate::parse;
 use crate::state;
 use crate::storage;
 use crate::tui::clipboard::{Clipboard, Paste};
@@ -26,8 +27,9 @@ use crossterm::event::{self, Event};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
+use std::fs;
 use std::io::{self, Stdout};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// How long a pause counts as having stopped typing. Long enough to type through the end
@@ -70,6 +72,13 @@ enum Mode {
     Muting(String),
 }
 
+struct PastedPicture {
+    path: PathBuf,
+    reference: String,
+    ordinal: usize,
+    saved: bool,
+}
+
 struct App {
     editor: Editor,
     document: view::Document,
@@ -94,6 +103,7 @@ struct App {
     viewport: usize,
     /// What the config said that could not be read, until the first key is pressed.
     notice: Vec<String>,
+    pictures: Vec<PastedPicture>,
     quit: bool,
 }
 
@@ -114,6 +124,7 @@ pub fn run(path: &Path) -> io::Result<()> {
     app.notice.splice(..0, notice);
 
     let result = app.loop_until_quit(&mut terminal);
+    app.discard_pictures();
     terminal::stop(capabilities, background)?;
     result
 }
@@ -134,6 +145,7 @@ impl App {
             generation: lint::generation(),
             viewport: 1,
             notice: Vec::new(),
+            pictures: Vec::new(),
             quit: false,
         };
         // Open the way the last run closed. A writer who turned the checker off did not
@@ -269,7 +281,7 @@ impl App {
             Action::Copy => self.copy(),
             Action::Paste => self.paste(),
             Action::Save => {
-                self.editor.save();
+                self.save();
             }
             Action::OpenSearch => {
                 self.editor.open_search();
@@ -319,7 +331,7 @@ impl App {
     fn act_quitting(&mut self, action: Action) {
         match action {
             // A failed save keeps the editor open rather than losing the text.
-            Action::SaveAndQuit => self.quit = self.editor.save(),
+            Action::SaveAndQuit => self.quit = self.save(),
             Action::DiscardAndQuit => self.quit = true,
             Action::Cancel => self.mode = Mode::Editing,
             _ => {}
@@ -428,9 +440,137 @@ impl App {
             Ok(file) => {
                 self.editor.error = None;
                 self.edit(|editor| editor.insert_picture(&file));
+                let ordinal = parse::image_paths(&self.editor.source())
+                    .iter()
+                    .position(|reference| reference == &file)
+                    .expect("the picture reference was just inserted");
+                let path =
+                    self.editor.path().parent().unwrap_or_else(|| Path::new(".")).join(&file);
+                self.pictures.push(PastedPicture { path, reference: file, ordinal, saved: false });
             }
             Err(error) => self.editor.error = Some(format!("Could not save the picture: {error}")),
         }
+    }
+
+    /// Save the document and make the pasted files agree with its image references. This
+    /// is the only time a rename touches the filesystem, so typing a filename stays cheap.
+    fn save(&mut self) -> bool {
+        let desired = self.picture_references();
+        let mut targets = Vec::with_capacity(desired.len());
+        for (picture, reference) in self.pictures.iter().zip(&desired) {
+            let target = match reference {
+                Some(reference) => match picture_target(self.editor.path(), reference) {
+                    Ok(target) => Some(target),
+                    Err(_) => {
+                        self.editor.error =
+                            Some(format!("Could not rename the picture to {reference}"));
+                        return false;
+                    }
+                },
+                None => None,
+            };
+            if let Some(target) = &target
+                && target != &picture.path
+                && target.exists()
+            {
+                self.editor.error = Some(format!(
+                    "Could not rename the picture: {} already exists",
+                    target.display()
+                ));
+                return false;
+            }
+            targets.push(target);
+        }
+
+        let mut renamed = Vec::new();
+        for (picture, target) in self.pictures.iter().zip(&targets) {
+            let Some(target) = target else { continue };
+            if target == &picture.path {
+                continue;
+            }
+            if let Err(error) = fs::rename(&picture.path, target) {
+                for (from, to) in renamed.iter().rev() {
+                    let _ = fs::rename(from, to);
+                }
+                self.editor.error = Some(format!("Could not rename the picture: {error}"));
+                return false;
+            }
+            renamed.push((target.clone(), picture.path.clone()));
+        }
+
+        if !self.editor.save() {
+            for (from, to) in renamed.iter().rev() {
+                let _ = fs::rename(from, to);
+            }
+            return false;
+        }
+
+        for ((picture, reference), target) in self.pictures.iter_mut().zip(&desired).zip(targets) {
+            if let (Some(reference), Some(target)) = (reference, target) {
+                picture.path = target;
+                picture.reference = reference.clone();
+                picture.saved = true;
+            }
+        }
+        for (picture, reference) in self.pictures.iter().zip(&desired) {
+            if reference.is_none()
+                && let Err(error) = fs::remove_file(&picture.path)
+                && error.kind() != io::ErrorKind::NotFound
+            {
+                self.editor.error =
+                    Some(format!("Could not remove the unreferenced picture: {error}"));
+            }
+        }
+        let mut index = 0;
+        self.pictures.retain(|_| {
+            let keep = desired[index].is_some();
+            index += 1;
+            keep
+        });
+        true
+    }
+
+    /// Match a pasted picture by its current name first, then by the image's position.
+    /// The latter is what makes editing only the destination count as a rename.
+    fn picture_references(&self) -> Vec<Option<String>> {
+        let references = parse::image_paths(&self.editor.source());
+        let mut claimed = vec![false; references.len()];
+        let mut desired = vec![None; self.pictures.len()];
+
+        for (index, picture) in self.pictures.iter().enumerate() {
+            let found = references
+                .iter()
+                .enumerate()
+                .filter(|(at, reference)| {
+                    !reference.is_empty() && !claimed[*at] && *reference == &picture.reference
+                })
+                .min_by_key(|(at, _)| at.abs_diff(picture.ordinal));
+            if let Some((at, reference)) = found {
+                claimed[at] = true;
+                desired[index] = Some(reference.clone());
+            }
+        }
+        for (index, picture) in self.pictures.iter().enumerate() {
+            if desired[index].is_none()
+                && picture.ordinal < references.len()
+                && !references[picture.ordinal].is_empty()
+                && !claimed[picture.ordinal]
+            {
+                claimed[picture.ordinal] = true;
+                desired[index] = Some(references[picture.ordinal].clone());
+            }
+        }
+        desired
+    }
+
+    /// Pictures introduced since the last successful save belong to discarded edits.
+    fn discard_pictures(&mut self) {
+        for picture in &self.pictures {
+            if !picture.saved {
+                let _ = fs::remove_file(&picture.path);
+            }
+        }
+        self.pictures.retain(|picture| picture.saved);
     }
 
     /// Ctrl+Q, Esc or Ctrl+D. A document with unsaved work asks first, with the three
@@ -487,6 +627,15 @@ impl App {
             y += height;
         }
     }
+}
+
+fn picture_target(document: &Path, reference: &str) -> io::Result<PathBuf> {
+    let relative = Path::new(reference);
+    let mut components = relative.components();
+    if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "picture names must be filenames"));
+    }
+    Ok(document.parent().unwrap_or_else(|| Path::new(".")).join(relative))
 }
 
 #[cfg(test)]
@@ -768,6 +917,60 @@ mod tests {
         assert_eq!(app.editor.active().cursor(), 2, "the cursor is not where the words go");
         let beside = path.parent().expect("a directory of its own").join("post-1.png");
         assert_eq!(std::fs::read(beside).ok(), Some(png), "the picture was not written");
+        forget(&path);
+    }
+
+    #[test]
+    fn discarding_a_pasted_picture_removes_its_file() {
+        let path = document("discard-picture", "A document.");
+        let mut app = app(&path);
+        let png = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/image.png"))
+            .expect("the sample picture");
+        app.paste_content(Paste::Picture(png));
+        let picture = path.parent().unwrap().join("post-1.png");
+        assert!(picture.exists());
+
+        app.discard_pictures();
+
+        assert!(!picture.exists());
+        forget(&path);
+    }
+
+    #[test]
+    fn saving_without_the_pasted_reference_removes_the_file() {
+        let path = document("remove-picture", "A document.");
+        let mut app = app(&path);
+        let png = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/image.png"))
+            .expect("the sample picture");
+        app.paste_content(Paste::Picture(png));
+        let picture = path.parent().unwrap().join("post-1.png");
+        app.act(Action::Undo);
+
+        assert!(app.save());
+        assert!(!picture.exists());
+        forget(&path);
+    }
+
+    #[test]
+    fn saving_a_renamed_picture_reference_renames_the_file() {
+        let path = document("rename-picture", "A document.");
+        let mut app = app(&path);
+        let png = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/image.png"))
+            .expect("the sample picture");
+        app.paste_content(Paste::Picture(png.clone()));
+        for _ in 0..2 {
+            app.act(Action::Move(crate::editor::Motion::Character(1), false));
+        }
+        for _ in 0..10 {
+            app.act(Action::Move(crate::editor::Motion::Character(1), true));
+        }
+        app.act(Action::Type("better-name.png".into()));
+
+        assert!(app.save());
+
+        let directory = path.parent().unwrap();
+        assert!(!directory.join("post-1.png").exists());
+        assert_eq!(std::fs::read(directory.join("better-name.png")).unwrap(), png);
         forget(&path);
     }
 
