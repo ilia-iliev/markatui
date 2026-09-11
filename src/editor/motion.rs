@@ -1,6 +1,7 @@
-//! Where the cursor goes, and what a selection does as it goes there. The rules at the
-//! edges of a block are the Qt editor's: up and down leave it, and left and right only do
-//! so while a selection is being drawn. Nothing here changes the text.
+//! Where the cursor goes, and what a selection does as it goes there. Every arrow leaves
+//! a block at its edge: the blocks are one document to whoever is reading it, and a
+//! movement that stops at a boundary the writer cannot see is a key that does nothing.
+//! Nothing here changes the text.
 
 use super::Editor;
 use crate::active::{Active, Step};
@@ -19,8 +20,7 @@ pub enum Motion {
 
 impl Editor {
     /// Move the cursor, carrying a selection along with it where `extend` says so.
-    /// The rules at the edges of a block are the Qt editor's: up and down leave it, and
-    /// left and right only do so while a selection is being drawn.
+    /// At the edges of a block every arrow leaves it, with or without a selection.
     pub fn move_cursor(&mut self, motion: Motion, extend: bool) {
         if extend {
             self.active.start_selection();
@@ -40,9 +40,11 @@ impl Editor {
 
     fn step_character(&mut self, step: Step, extend: bool) {
         let at_edge = self.active.cursor() == if step > 0 { self.active.length() } else { 0 };
-        // The plain arrows have always stopped at a block's ends; only a selection
-        // being drawn carries on into the next one.
-        if at_edge && extend {
+        // A step off the end of a block carries on into the next one, the way it carries
+        // over a line break within one. A block ends where the writer pressed Enter and
+        // nowhere else, so stopping there leaves an arrow that does nothing at a place
+        // the writing does not stop at.
+        if at_edge {
             self.leave(step, extend);
             return;
         }

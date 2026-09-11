@@ -1173,6 +1173,33 @@ mod tests {
         assert!(!editor.take_hoisted());
     }
 
+    /// Right off the end of a block goes on into the next one, and Left off the start
+    /// comes back: a block boundary is a place the writing carries over, not a wall.
+    #[test]
+    fn steps_from_one_block_into_the_next_and_back() {
+        let mut editor = document("alpha\n\nbeta");
+        editor.activate(0, 5);
+        editor.move_cursor(Motion::Character(1), false);
+        assert_eq!((editor.index(), editor.active().cursor()), (1, 0));
+
+        editor.move_cursor(Motion::Character(-1), false);
+        assert_eq!((editor.index(), editor.active().cursor()), (0, 5));
+    }
+
+    /// The ends of the document have no block to go on to, so the cursor stays where the
+    /// text stops rather than going nowhere.
+    #[test]
+    fn stays_at_the_ends_of_the_document() {
+        let mut editor = document("alpha\n\nbeta");
+        editor.activate(0, 0);
+        editor.move_cursor(Motion::Character(-1), false);
+        assert_eq!((editor.index(), editor.active().cursor()), (0, 0));
+
+        editor.activate(1, 4);
+        editor.move_cursor(Motion::Character(1), false);
+        assert_eq!((editor.index(), editor.active().cursor()), (1, 4));
+    }
+
     /// Down on the last line of the document has no line and no block to go to, so it
     /// goes to the end of the text — which is what lets Shift take the last line in.
     #[test]
