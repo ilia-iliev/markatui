@@ -3,21 +3,22 @@ use std::path::{Path, PathBuf};
 
 const HELP: &str = "Usage:
   markatui <file.md>
+  markatui theme light|dark|terminal
   markatui -keymap
   markatui -keymap <command> <key>
   markatui -keymap default
   markatui -checks
   markatui -checks on|off <check>
-  markatui theme light|dark|terminal
   markatui -config
   markatui -config default
 
 Available options:
-  -h, --help  Print help
-  -keymap     List the keys, bind one to a command, or put them all back
-  -checks     List the writing checks, or turn one on or off
-  -theme      Set light, dark, or terminal colours
-  -config     Edit the config file, or put it back to its defaults";
+  -h, --help     Print help
+  -V, --version  Print version
+  theme          Set light, dark, or terminal colours
+  -keymap        List the keys, bind one to a command, or put them all back
+  -checks        List the writing checks, or turn one on or off
+  -config        Edit the config file, or put it back to its defaults";
 
 fn main() {
     let mut arguments = std::env::args().skip(1);
@@ -36,6 +37,11 @@ fn main() {
         match flag {
             "h" | "help" => {
                 println!("{HELP}");
+                return;
+            }
+            // The first thing anybody runs, and the first thing a bug report needs.
+            "V" | "version" => {
+                println!("markatui {}", env!("CARGO_PKG_VERSION"));
                 return;
             }
             "checks" => return report(checks(arguments)),

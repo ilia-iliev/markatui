@@ -11,8 +11,8 @@
 //! byte arrived.
 //!
 //! ```text
-//! cargo run --release --example startup -- sample/post.md
-//! cargo run --release --example startup -- sample/post.md --runs 10 --timeline
+//! cargo run --release --example startup -- sample/demo.md
+//! cargo run --release --example startup -- sample/demo.md --runs 10 --timeline
 //! ```
 //!
 //! The timeline is where a slow start is found. Output comes in bursts with the work

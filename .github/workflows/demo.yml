@@ -19,6 +19,8 @@ permissions:
 
 jobs:
   demo:
+    # A fork films the demo the same way and sees whether it still works; only the
+    # repository the README's film lives in has anywhere to put a new one.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +47,16 @@ jobs:
           name: frames
           path: ${{ runner.temp }}/frames
 
+      # A fork has nowhere to commit the film to, and a protected main may refuse it.
+      # Either way the run is worth something if the film can be taken off it by hand.
+      - name: Keep the film
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo
+          path: docs/demo.gif
+
       - name: Commit it if it changed
+        if: github.repository == 'ilia-iliev/markatui' && github.ref == 'refs/heads/main'
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
@@ -53,4 +64,12 @@ jobs:
           # Nothing to say when the editor draws what it drew last time.
           git diff --cached --quiet && exit 0
           git commit -m 'Refilm the demo [skip ci]'
-          git push
+          # Somebody may have pushed while this was filming, and main may not take a
+          # push from a workflow at all: say which it was rather than failing blankly.
+          git pull --rebase
+          git push || {
+              echo "::error::markatui: main refused the push."
+              echo "::error::A branch protected against workflows needs the film committed by hand:"
+              echo "::error::take docs/demo.gif off this run's artifacts and commit it."
+              exit 1
+          }

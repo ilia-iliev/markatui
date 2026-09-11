@@ -72,7 +72,7 @@ fn beside_a_picture(name: &str, source: &str) -> std::path::PathBuf {
     std::fs::create_dir_all(&directory).expect("a temporary directory");
     let path = directory.join("post.md");
     std::fs::write(&path, source).expect("a document");
-    let sample = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/image.png");
+    let sample = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/image.png");
     std::fs::copy(sample, directory.join("image.png")).expect("a picture beside it");
     path
 }
@@ -83,8 +83,12 @@ fn forget(path: &std::path::Path) {
         .expect("the temporary directory goes");
 }
 
+/// The document these tests are drawn from. It is a fixture of their own and not the
+/// sample the film is made of: that one is written to look well on a screen for twenty
+/// seconds, and is trimmed whenever the film is. This one is written to hold one of
+/// everything the view knows how to draw.
 fn sample_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/post.md")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/post.md")
 }
 
 fn sample() -> Editor {

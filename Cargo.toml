@@ -8,6 +8,9 @@ repository = "https://github.com/ilia-iliev/markatui"
 readme = "README.md"
 keywords = ["markdown", "editor", "terminal", "tui"]
 categories = ["command-line-utilities", "text-editors"]
+# Neither the workflows nor the installer is any use inside a published crate, and the
+# film in the README is the largest thing in the repository.
+exclude = [".github", "packaging", "docs"]
 # harper-core needs a compiler that infers an array of function items as the pointer type
 # the call expects; 1.92 does not, and stops with a type error inside harper itself.
 rust-version = "1.95"

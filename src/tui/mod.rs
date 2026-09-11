@@ -690,7 +690,7 @@ mod tests {
         std::fs::create_dir_all(&directory).expect("a temporary directory");
         let path = directory.join("post.md");
         std::fs::write(&path, source).expect("a document");
-        let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/image.png");
+        let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/image.png");
         std::fs::copy(sample, directory.join("image.png")).expect("a picture beside it");
         path
     }
@@ -699,6 +699,12 @@ mod tests {
     /// picture under it: the last row of the picture and the last row of the screen are
     /// the same row, which is the one place a picture must not be drawn.
     const TO_THE_BOTTOM: &str = "# Title\n\n![A picture](image.png)\n";
+
+    /// The picture the fixture document names, as the bytes a paste puts on the clipboard.
+    fn sample_png() -> Vec<u8> {
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/image.png"))
+            .expect("the sample picture")
+    }
 
     /// The document and the picture beside it, once the test is through with them.
     fn forget(path: &Path) {
@@ -985,8 +991,7 @@ mod tests {
     fn pastes_the_picture_on_the_clipboard() {
         let path = document("paste-picture", "A document.");
         let mut app = app(&path);
-        let png = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/image.png"))
-            .expect("the sample picture");
+        let png = sample_png();
 
         app.paste_content(Paste::Picture(png.clone()));
 
@@ -1001,8 +1006,7 @@ mod tests {
     fn discarding_a_pasted_picture_removes_its_file() {
         let path = document("discard-picture", "A document.");
         let mut app = app(&path);
-        let png = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/image.png"))
-            .expect("the sample picture");
+        let png = sample_png();
         app.paste_content(Paste::Picture(png));
         let picture = path.parent().unwrap().join("post-1.png");
         assert!(picture.exists());
@@ -1017,8 +1021,7 @@ mod tests {
     fn saving_without_the_pasted_reference_removes_the_file() {
         let path = document("remove-picture", "A document.");
         let mut app = app(&path);
-        let png = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/image.png"))
-            .expect("the sample picture");
+        let png = sample_png();
         app.paste_content(Paste::Picture(png));
         let picture = path.parent().unwrap().join("post-1.png");
         app.act(Action::Undo);
@@ -1032,8 +1035,7 @@ mod tests {
     fn saving_a_renamed_picture_reference_renames_the_file() {
         let path = document("rename-picture", "A document.");
         let mut app = app(&path);
-        let png = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("sample/image.png"))
-            .expect("the sample picture");
+        let png = sample_png();
         app.paste_content(Paste::Picture(png.clone()));
         for _ in 0..2 {
             app.act(Action::Move(crate::editor::Motion::Character(1), false));
@@ -1363,6 +1365,27 @@ mod tests {
 
         app.point(left_click(app.column.x, 4));
         assert_eq!(app.editor.index(), 0, "a click moved the cursor behind the quit prompt");
+        forget(&path);
+    }
+
+    /// Quitting over a file somebody else has written asks again rather than going quiet
+    /// and taking the answer: the editor stays up with what happened at the foot of it.
+    #[test]
+    fn a_quit_over_a_changed_file_asks_a_second_time() {
+        let path = document("quit-changed", "A document.");
+        let mut app = app(&path);
+        app.act(Action::Type("X".into()));
+        std::fs::write(&path, "Somebody else.").expect("the file changes under the editor");
+        app.mode = Mode::Quitting;
+
+        app.act(Action::SaveAndQuit);
+        assert!(!app.quit, "the editor quit over somebody else's work");
+        assert!(app.footer(90)[0].contains("changed on disk"), "{:?}", app.footer(90));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Somebody else.");
+
+        app.act(Action::SaveAndQuit);
+        assert!(app.quit);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "XA document.");
         forget(&path);
     }
 }

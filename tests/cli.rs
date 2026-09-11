@@ -22,6 +22,21 @@ fn long_help_flag_prints_help_without_opening_a_file() {
     assert!(output.stderr.is_empty());
 }
 
+/// The version, both ways round, because it is the first thing a bug report is asked
+/// for and nobody should have to guess which spelling this editor takes.
+#[test]
+fn version_flag_prints_the_version() {
+    for flag in ["-V", "--version"] {
+        let output =
+            Command::new(env!("CARGO_BIN_EXE_markatui")).arg(flag).output().expect("markatui runs");
+
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), format!("markatui {}", env!("CARGO_PKG_VERSION")));
+        assert!(output.stderr.is_empty());
+    }
+}
+
 #[test]
 fn unknown_flag_reports_the_available_flags() {
     let output = Command::new(env!("CARGO_BIN_EXE_markatui"))

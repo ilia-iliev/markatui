@@ -1,0 +1,46 @@
+# A tag makes a binary anybody can run: statically linked against musl, so it needs no
+# shared library on the machine it lands on and no Rust to build it there.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install the musl linker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release --target x86_64-unknown-linux-musl
+
+      # The binary, what it is licensed under, and how to use it — and a checksum, so a
+      # download can be told apart from what was built here.
+      - name: Pack it up
+        run: |
+          name="markatui-${GITHUB_REF_NAME#v}-x86_64-unknown-linux-musl"
+          mkdir "$name"
+          cp target/x86_64-unknown-linux-musl/release/markatui README.md LICENSE "$name/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.tar.gz
+            *.tar.gz.sha256

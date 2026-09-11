@@ -22,6 +22,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 use undo::Undo;
 
 /// The table a writer is given to fill in. Two columns and one row of them, which is the
@@ -61,6 +62,16 @@ pub struct Editor {
     /// paragraph of its own since the screen last looked. The foot of the screen says so.
     hoisted: bool,
     path: PathBuf,
+    /// Set when the file would not read. The document is empty because of that and not
+    /// because the file is, so saving it would write the emptiness over the writer's
+    /// text. Nothing is saved until the editor is pointed at a file it can read.
+    unreadable: bool,
+    /// When the file was last seen — at open, and at every save. A file whose time has
+    /// moved on since has been written by somebody else, and saving would go over them.
+    seen: Option<SystemTime>,
+    /// Whether the writer has already been told the file changed under them. The save
+    /// after that one goes through: by then it is their decision, not an accident.
+    insisted: bool,
     pub error: Option<String>,
     pub lint: LintState,
     pub search: SearchState,
@@ -75,6 +86,7 @@ impl Editor {
         } else {
             std::env::current_dir().unwrap_or_default().join(path)
         };
+        let path = resolve(&path);
         let (source, error) = match fs::read_to_string(&path) {
             Ok(source) => (source, None),
             Err(error) if error.kind() == ErrorKind::NotFound => (String::new(), None),
@@ -83,7 +95,10 @@ impl Editor {
             }
         };
 
+        let seen = modified(&path);
         let mut editor = Editor::read(&source, path, error);
+        editor.unreadable = editor.error.is_some();
+        editor.seen = seen;
         let last = editor.blocks.len() - 1;
         // Pick up where the last session left off in this file, or at its end.
         editor.settle_in(state::recall(&editor.path).unwrap_or(last).min(last));
@@ -119,6 +134,9 @@ impl Editor {
             settled: true,
             hoisted,
             path,
+            unreadable: false,
+            seen: None,
+            insisted: false,
             error,
             lint: LintState::default(),
             search: SearchState::default(),
@@ -586,7 +604,26 @@ impl Editor {
         blocks::source(&blocks, &self.gaps)
     }
 
+    /// Write the document out, unless doing so would lose text the editor never had.
+    /// A file that would not read is never written over, and a file that has changed on
+    /// disk since it was opened stops the first save and says so; the save after that
+    /// one goes through.
     pub fn save(&mut self) -> bool {
+        if self.unreadable {
+            self.error = Some(format!(
+                "Not saving over {}: it would not open, so this document is not it",
+                self.path.display()
+            ));
+            return false;
+        }
+        if !self.insisted && self.seen != modified(&self.path) {
+            self.insisted = true;
+            self.error = Some(format!(
+                "{} has changed on disk. Save again to write over it",
+                self.path.display()
+            ));
+            return false;
+        }
         self.store_active();
         if let Err(error) = storage::write_atomic(&self.path, self.source().as_bytes()) {
             let message = format!("Could not save {}: {error}", self.path.display());
@@ -595,6 +632,8 @@ impl Editor {
             return false;
         }
         self.error = None;
+        self.seen = modified(&self.path);
+        self.insisted = false;
         self.remember_position();
         self.saved_revision = self.revision;
         true
@@ -603,6 +642,29 @@ impl Editor {
     /// Note where the cursor is so the next session can pick it up.
     pub fn remember_position(&self) {
         state::remember(&self.path, self.index);
+    }
+}
+
+/// When the file was last written, or nothing where there is no file to ask about. The
+/// two cases a filesystem can answer with — no file, and no clock — are the same answer
+/// here: nothing to compare a later look against.
+fn modified(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|metadata| metadata.modified()).ok()
+}
+
+/// The path with the symbolic links along it followed, so that saving replaces the file
+/// a link points at rather than the link itself. A file that does not exist yet is
+/// resolved as far as the directory it will be made in.
+fn resolve(path: &Path) -> PathBuf {
+    if let Ok(resolved) = fs::canonicalize(path) {
+        return resolved;
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => match fs::canonicalize(parent) {
+            Ok(parent) => parent.join(name),
+            Err(_) => path.to_path_buf(),
+        },
+        _ => path.to_path_buf(),
     }
 }
 
@@ -1372,5 +1434,92 @@ mod tests {
     fn keeps_the_source_it_was_given_byte_for_byte() {
         let editor = document("# Title\n\n\nBody  \n\n[home]: https://example.com\n");
         assert_eq!(editor.source(), "# Title\n\n\nBody  \n\n[home]: https://example.com\n");
+    }
+
+    /// A directory of its own for a test that has to touch the disk, so that one test
+    /// opening a file says nothing about what another one sees.
+    fn directory(name: &str) -> PathBuf {
+        let directory =
+            std::env::temp_dir().join(format!("markatui-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("a temporary directory");
+        directory
+    }
+
+    /// A file the editor cannot read is not an empty file, and the empty document it puts
+    /// on the screen instead must never be written back over it.
+    #[test]
+    fn refuses_to_save_over_a_file_that_would_not_open() {
+        let directory = directory("unreadable");
+        let path = directory.join("post.md");
+        // Latin-1: a byte no UTF-8 reader will take.
+        fs::write(&path, b"caf\xe9\n").unwrap();
+
+        let mut editor = Editor::open(&path);
+        assert!(editor.error.is_some(), "the failed open is said out loud");
+
+        assert!(!editor.save());
+        assert!(!editor.save(), "insisting does not get past it either");
+        assert_eq!(fs::read(&path).unwrap(), b"caf\xe9\n");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// A document reached through a symbolic link is the file at the end of the link.
+    /// Saving replaces that file and leaves the link alone.
+    #[test]
+    #[cfg(unix)]
+    fn saves_through_a_symbolic_link_rather_than_over_it() {
+        let directory = directory("symlink");
+        let real = directory.join("real.md");
+        let link = directory.join("link.md");
+        fs::write(&real, "one\n").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let mut editor = Editor::open(&link);
+        editor.insert("X");
+        assert!(editor.save());
+
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&real).unwrap(), "oneX\n");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// A file written by somebody else since it was opened stops the first save. The
+    /// writer is told, and the next save goes through: by then it is their decision.
+    #[test]
+    fn stops_the_first_save_over_a_file_that_changed_on_disk() {
+        let directory = directory("changed");
+        let path = directory.join("post.md");
+        fs::write(&path, "one\n").unwrap();
+
+        let mut editor = Editor::open(&path);
+        editor.insert("X");
+        fs::write(&path, "somebody else\n").unwrap();
+
+        assert!(!editor.save());
+        assert!(editor.error.as_deref().unwrap().contains("changed on disk"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "somebody else\n");
+
+        assert!(editor.save());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "oneX\n");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Saving twice over is the ordinary case and says nothing: the editor's own write is
+    /// not somebody else's.
+    #[test]
+    fn saves_again_without_complaining_about_its_own_write() {
+        let directory = directory("again");
+        let path = directory.join("post.md");
+        fs::write(&path, "one\n").unwrap();
+
+        let mut editor = Editor::open(&path);
+        editor.insert("X");
+        assert!(editor.save());
+        editor.insert("Y");
+        assert!(editor.save());
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "oneXY\n");
+        fs::remove_dir_all(directory).unwrap();
     }
 }

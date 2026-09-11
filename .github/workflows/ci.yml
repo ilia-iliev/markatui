@@ -1,0 +1,35 @@
+# What every push has to pass: the code is formatted, clippy is quiet, the tests run, and
+# the installer still installs. Nothing here needs a terminal — the demo workflow is the
+# one that needs a screen.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test
+
+      # The installer runs against stub rustup, cargo and xdg-mime, so it touches nothing
+      # outside its own temporary directory.
+      - name: Installer
+        run: ./packaging/test_install.sh
