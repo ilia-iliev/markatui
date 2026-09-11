@@ -1,6 +1,6 @@
 [package]
 name = "markatui"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "A keyboard-first Markdown editor for the terminal"
 license = "MIT"
