@@ -58,6 +58,15 @@ fi
 install -D -m 755 "$binary" "$destination"
 echo "markatui: installed $destination"
 
+# Cargo keeps every artifact it has ever built, so a repeatedly rebuilt target
+# directory grows without bound. Hold it to a budget, discarding least recent first.
+# A budget rather than an age: artifacts of daily builds are never old enough to expire.
+if command -v cargo-sweep >/dev/null 2>&1; then
+    cargo sweep --maxsize "${CARGO_SWEEP_MAXSIZE:-4000}"
+else
+    echo "markatui: cargo-sweep is unavailable; stale build artifacts were not pruned" >&2
+fi
+
 # Register the application independently of whether the user makes it their default.
 # An Exec argument has its own quoting rules: quote the path, escape its reserved
 # characters, and double percent signs so they are not interpreted as field codes.
@@ -69,17 +78,24 @@ desktop_exec=$(printf '%s' "$destination" | sed \
     -e 's/%/%%/g')
 data_home=${XDG_DATA_HOME:-$HOME/.local/share}
 desktop="$data_home/applications/markatui.desktop"
-mkdir -p "$(dirname "$desktop")"
-cat > "$desktop" <<EOF
+# A symlink here belongs to whatever put it there, usually a dotfiles repository.
+# Writing to the path would follow it and edit that repository's file instead.
+if [ -L "$desktop" ]; then
+    echo "markatui: $desktop is a symlink; left it for its owner to maintain"
+else
+    mkdir -p "$(dirname "$desktop")"
+    cat > "$desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=markatui
 Exec="$desktop_exec" %f
+TryExec=$destination
 Terminal=true
 MimeType=text/markdown;
 EOF
-chmod 644 "$desktop"
-echo "markatui: installed $desktop"
+    chmod 644 "$desktop"
+    echo "markatui: installed $desktop"
+fi
 
 if command -v xdg-mime >/dev/null 2>&1; then
     markdown_default=$(xdg-mime query default text/markdown) || markdown_default=

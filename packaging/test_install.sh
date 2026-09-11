@@ -121,4 +121,23 @@ assert_contains "$desktop" "Exec=\"$INSTALL_PREFIX/bin/markatui\" %f"
 grep -Fx "query default text/markdown" "$tmp/xdg-mime.log" >/dev/null ||
     fail "existing Markdown default was not checked"
 
+# A stowed entry is a symlink to a dotfiles repository; writing to the path would
+# follow it and rewrite that repository's file.
+dotfiles="$tmp/dotfiles/markatui.desktop"
+mkdir -p "$(dirname "$dotfiles")"
+cat > "$dotfiles" <<'ENTRY'
+[Desktop Entry]
+Type=Application
+Name=Markatui
+Exec=foot -e markatui %f
+MimeType=text/markdown;
+ENTRY
+before=$(cat "$dotfiles")
+rm -f "$desktop"
+ln -s "$dotfiles" "$desktop"
+run_installer 'y\n' "$tmp/stowed.out"
+[ "$status" -eq 0 ] || fail "install over a stowed desktop entry failed"
+[ -L "$desktop" ] || fail "replaced the stowed desktop entry symlink"
+[ "$(cat "$dotfiles")" = "$before" ] || fail "wrote through the stowed desktop entry"
+
 printf 'install tests passed\n'
