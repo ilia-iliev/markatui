@@ -108,6 +108,20 @@ else
     echo "markatui: xdg-mime is unavailable; the Markdown default was not changed" >&2
 fi
 
+# What is installed above is a copy, and a copy is what an install should be: it owes
+# nothing to the checkout it came from. That leaves it as it is until this script runs
+# again, which is a poor fit for the machine markatui is written on, where the editor in
+# use should be the last one built. A link instead of the copy gives that, and gives up
+# an install that survives the build directory being cleaned or the checkout moving.
+#
+# The link is to the plain release target rather than the static one installed above:
+# that is what `cargo build --release` writes, so an ordinary rebuild is live at once.
+if confirm "Link $destination to the build, so rebuilds are picked up?"; then
+    cargo build --release
+    ln -sfn "$PWD/target/release/markatui" "$destination"
+    echo "markatui: linked $destination to $PWD/target/release/markatui"
+fi
+
 case ":$PATH:" in
     *":$prefix/bin:"*) ;;
     *) echo "markatui: $prefix/bin is not on your PATH." ;;
