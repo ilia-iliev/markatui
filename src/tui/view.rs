@@ -199,6 +199,20 @@ fn stacked(layouts: &[Layout]) -> Vec<usize> {
 
 /// Draw the column of text. `scroll` is the screen row at the top of the area.
 pub fn draw(frame: &mut Frame, area: Rect, editor: &Editor, document: &Document, scroll: usize) {
+    draw_with_caret(frame, area, editor, document, scroll, true);
+}
+
+/// Draw with either the terminal's caret or one painted into the cells. The latter keeps
+/// an immediate terminal's native caret from being watched following the renderer around
+/// the frame.
+pub(super) fn draw_with_caret(
+    frame: &mut Frame,
+    area: Rect,
+    editor: &Editor,
+    document: &Document,
+    scroll: usize,
+    native_caret: bool,
+) {
     let column = column(area);
     let selection = Selection::of(editor);
 
@@ -219,7 +233,13 @@ pub fn draw(frame: &mut Frame, area: Rect, editor: &Editor, document: &Document,
         && row < scroll + area.height as usize
         && at < column.width
     {
-        frame.set_cursor_position(Position::new(column.x + at, area.y + (row - scroll) as u16));
+        let position = Position::new(column.x + at, area.y + (row - scroll) as u16);
+        if native_caret {
+            frame.set_cursor_position(position);
+        } else {
+            let style = frame.buffer_mut()[position].style();
+            frame.buffer_mut()[position].set_style(theme::selected(style));
+        }
     }
 }
 

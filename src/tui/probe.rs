@@ -8,6 +8,10 @@
 //!   Alacritty and kitty all answer yes to. Legacy exists only so that a terminal saying
 //!   no still runs, with the collisions it brings — Ctrl+I arriving as Tab, Ctrl+Enter as
 //!   Enter — documented rather than worked around.
+//! - synchronized updates: terminals answering the kitty keyboard query are the known
+//!   set that hold them. Others get ordinary updates with the native cursor kept hidden
+//!   and a caret painted into the cells; in particular, this keeps VTE/GNOME Terminal
+//!   from showing either cursor motion or a hide and show through every frame.
 //! - the clipboard: OSC 52 is assumed on. There is no reliable query, and a terminal that
 //!   ignores it loses nothing the machine's own clipboard, which `tui::clipboard` reads
 //!   and writes beside it, does not still do.
@@ -45,6 +49,13 @@ pub fn ask() -> Capabilities {
         _ => Keyboard::Legacy,
     };
     Capabilities { keyboard }
+}
+
+/// Whether frames can be hidden from view until they are complete. There is no portable
+/// query for mode 2026, so stay conservative: every terminal known here to answer the
+/// kitty keyboard query also implements synchronized updates.
+pub fn synchronized_updates(keyboard: Keyboard) -> bool {
+    keyboard == Keyboard::Kitty
 }
 
 /// What pictures are drawn with. Asked separately from the rest because of when it has to

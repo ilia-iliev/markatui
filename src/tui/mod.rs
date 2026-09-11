@@ -238,12 +238,17 @@ impl App {
     /// and on, which is a caret that blinks whatever the terminal was told about blinking.
     ///
     /// So the frame is wrapped instead: between the two escapes below the terminal keeps
-    /// presenting what it last presented, however much is sent it. The caret still comes
-    /// off, because a terminal that does not know the escapes ignores them and is left
-    /// with what it had before; on one that does, the taking off and the putting back
-    /// both happen inside the update, and what reaches the screen is a caret that never
-    /// moved.
+    /// presenting what it last presented, however much is sent it. The caret comes off
+    /// only where that wrapping is known to work, so taking it off and putting it back
+    /// both happen inside the update and never reach the screen. A terminal that cannot
+    /// hold an update keeps its native caret off and gets one painted into the frame;
+    /// otherwise either the hide and show or the renderer's cursor motion would be seen.
     fn send<W: Write>(&mut self, terminal: &mut Terminal<CrosstermBackend<W>>) -> io::Result<()> {
+        if !probe::synchronized_updates(self.keyboard) {
+            terminal.hide_cursor()?;
+            terminal.draw(|frame| self.draw(frame))?;
+            return Ok(());
+        }
         queue!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
         terminal.hide_cursor()?;
         terminal.draw(|frame| self.draw(frame))?;
@@ -683,7 +688,14 @@ impl App {
         if self.follow {
             self.follow_the_caret(self.viewport);
         }
-        view::draw(frame, text, &self.editor, &self.document, self.scroll);
+        view::draw_with_caret(
+            frame,
+            text,
+            &self.editor,
+            &self.document,
+            self.scroll,
+            probe::synchronized_updates(self.keyboard),
+        );
         // Over the rows the layout left empty for them, and after the text: a picture is
         // drawn by the terminal itself, not out of the cells underneath it.
         self.gallery.draw(frame, text, &self.document, self.scroll);
@@ -948,6 +960,49 @@ mod tests {
             at += step;
         }
         screen
+    }
+
+    /// A legacy terminal does not hold synchronized updates. Its native caret stays off
+    /// while frames are sent so it cannot be watched following the renderer, and a drawn
+    /// caret stands in for it without blinking off and on between frames.
+    #[test]
+    fn keeps_the_native_caret_hidden_where_updates_are_not_synchronized() {
+        let path = document("legacy-caret", "A paragraph with nothing happening to it.\n");
+        let mut app = App::open(&path, Gallery::new(Picker::halfblocks(), &path), Keyboard::Legacy);
+        let wire = Wire::default();
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(wire.clone()),
+            TerminalOptions { viewport: Viewport::Fixed(Rect::new(0, 0, 80, 20)) },
+        )
+        .expect("a test screen");
+
+        for _ in 0..10 {
+            app.send(&mut terminal).expect("a frame");
+        }
+        let sent = wire.sent();
+        forget(&path);
+
+        assert_eq!(caret_on_the_screen(&sent), vec![true, false]);
+        assert_eq!(at(&sent, SHOW), None, "a frame showed the native caret");
+        assert_eq!(at(&sent, OPEN), None, "an unsupported synchronized update was opened");
+    }
+
+    #[test]
+    fn paints_a_caret_where_the_native_one_stays_hidden() {
+        let path = document("painted-caret", "A paragraph.\n");
+        let mut app = App::open(&path, Gallery::new(Picker::halfblocks(), &path), Keyboard::Legacy);
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).expect("a test screen");
+
+        frame(&mut app, &mut terminal);
+        let (row, column) = app.document.caret().expect("a drawn caret");
+        let caret = &terminal.backend().buffer()
+            [(app.column.x + column, row.saturating_sub(app.scroll) as u16)];
+        forget(&path);
+
+        assert!(
+            caret.style().add_modifier.contains(ratatui::style::Modifier::REVERSED),
+            "no caret was painted into the frame"
+        );
     }
 
     /// Every frame goes out with the caret off and ends with ratatui putting it back, and

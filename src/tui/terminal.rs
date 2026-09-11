@@ -4,6 +4,7 @@
 
 use crate::tui::config;
 use crate::tui::probe::{Capabilities, Keyboard};
+use crossterm::cursor;
 use crossterm::event::{
     self, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
@@ -70,7 +71,7 @@ pub(super) fn stop(capabilities: Capabilities, background: Option<Color>) -> io:
     if config::get().mouse {
         execute!(io::stdout(), event::DisableMouseCapture)?;
     }
-    execute!(io::stdout(), event::DisableBracketedPaste, LeaveAlternateScreen)?;
+    execute!(io::stdout(), event::DisableBracketedPaste, cursor::Show, LeaveAlternateScreen)?;
     terminal::disable_raw_mode()
 }
 
