@@ -231,9 +231,14 @@ pub(super) fn draw_with_caret(
     if let Some((row, at)) = document.caret()
         && row >= scroll
         && row < scroll + area.height as usize
-        && at < column.width
     {
-        let position = Position::new(column.x + at, area.y + (row - scroll) as u16);
+        // A line that fills the column has no cell of its own left for the caret: the
+        // place past its last character is the first column of the margin, which is
+        // where the next character would go and still a place on the screen. Only a
+        // terminal no wider than the column has no such place, and there the caret
+        // stands on the last cell rather than off the edge.
+        let x = (column.x + at).min(area.right().saturating_sub(1));
+        let position = Position::new(x, area.y + (row - scroll) as u16);
         if native_caret {
             frame.set_cursor_position(position);
         } else {

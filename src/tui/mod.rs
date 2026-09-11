@@ -1459,6 +1459,36 @@ mod tests {
     const WITH_A_LINK: &str =
         "# Title\n\nA paragraph with [a link](https://example.com/x) in it.\n";
 
+    /// A line that fills the column has nothing left of it for the caret to stand on:
+    /// the place past its last character is the first column of the margin. That is where
+    /// the next character would go and still a place on the screen, so the caret goes
+    /// there — pressing Up onto such a line is not a keystroke that loses the caret.
+    #[test]
+    fn keeps_the_caret_on_a_line_that_fills_the_column() {
+        let width = theme::content_width();
+        let filled = "x".repeat(width as usize);
+        let path = document("filled-line", &format!("{filled}\n\n## Install\n"));
+        let mut app = app(&path);
+        let mut terminal = Terminal::new(TestBackend::new(90, 24)).expect("a test screen");
+        app.editor.activate(1, 0);
+        frame(&mut app, &mut terminal);
+
+        app.act(Action::Row(-1, false));
+        frame(&mut app, &mut terminal);
+        let (row, column) = app.document.caret().expect("a caret at the end of the line");
+        let position = terminal.backend().cursor_position();
+        forget(&path);
+
+        assert_eq!(app.editor.index(), 0, "Up did not go to the line above");
+        assert_eq!(column, width, "the caret is not past the last character of the line");
+        assert!(terminal.backend().cursor_visible(), "the caret went off the screen");
+        assert_eq!(
+            position,
+            ratatui::layout::Position::new(app.column.x + width, (row - app.scroll) as u16),
+            "the caret is not where the next character would go"
+        );
+    }
+
     fn pointer(kind: event::MouseEventKind, column: u16, row: u16) -> event::MouseEvent {
         event::MouseEvent { kind, column, row, modifiers: event::KeyModifiers::NONE }
     }
