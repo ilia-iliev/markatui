@@ -1,0 +1,7 @@
+# The crate's MSRV is its build requirement: a default toolchain older than this fails to
+# build it at all. Pinning here also carries what the workflows need, because this file
+# decides which toolchain runs and the actions only ever equip the default one.
+[toolchain]
+channel = "1.95"
+components = ["clippy", "rustfmt"]
+targets = ["x86_64-unknown-linux-musl"]
