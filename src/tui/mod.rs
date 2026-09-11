@@ -26,6 +26,8 @@ use crate::tui::images::Gallery;
 use crate::tui::keys::Action;
 use crate::tui::probe::Keyboard;
 use crossterm::event::{self, Event};
+use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
+use crossterm::{execute, queue};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
@@ -220,7 +222,7 @@ impl App {
         Ok(())
     }
 
-    /// Send one frame, with the caret off the screen while it goes.
+    /// Send one frame as one synchronized update, with the caret off the screen inside it.
     ///
     /// A frame does not arrive all at once. It goes out in pieces as the buffer behind
     /// stdout fills, and the terminal draws each piece as it comes; the caret is the
@@ -229,13 +231,23 @@ impl App {
     /// not short — and a gif makes one of those every time it turns, ten times a second.
     /// The caret is then watched wandering off into the document and coming back.
     ///
-    /// Ratatui puts it back where it belongs, but only once the last piece has gone out,
-    /// which is too late to not have been seen. So it is taken away first; ratatui's own
-    /// draw is what gives it back, at the end, where it was always going to.
+    /// Taking the caret away for the length of the frame is what stopped it wandering,
+    /// and it cost the writer the caret itself: ratatui gives it back at the end of every
+    /// frame, and a frame goes out each time the loop looks up from the keyboard — four
+    /// times a second with nothing being typed, ten with a gif turning. Off and on, off
+    /// and on, which is a caret that blinks whatever the terminal was told about blinking.
+    ///
+    /// So the frame is wrapped instead: between the two escapes below the terminal keeps
+    /// presenting what it last presented, however much is sent it. The caret still comes
+    /// off, because a terminal that does not know the escapes ignores them and is left
+    /// with what it had before; on one that does, the taking off and the putting back
+    /// both happen inside the update, and what reaches the screen is a caret that never
+    /// moved.
     fn send<W: Write>(&mut self, terminal: &mut Terminal<CrosstermBackend<W>>) -> io::Result<()> {
+        queue!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
         terminal.hide_cursor()?;
         terminal.draw(|frame| self.draw(frame))?;
-        Ok(())
+        execute!(terminal.backend_mut(), EndSynchronizedUpdate)
     }
 
     /// Take the next keystroke, or, where none comes, let the checker have its say. The
@@ -707,15 +719,18 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     /// A document of its own, so that a test writing into it disturbs nothing else, with
-    /// the sample picture beside it for the block that names one.
+    /// the sample pictures beside it for the block that names one: the still and the gif.
     fn document(name: &str, source: &str) -> std::path::PathBuf {
         let directory =
             std::env::temp_dir().join(format!("markatui-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("a temporary directory");
         let path = directory.join("post.md");
         std::fs::write(&path, source).expect("a document");
-        let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/image.png");
-        std::fs::copy(sample, directory.join("image.png")).expect("a picture beside it");
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        for picture in ["image.png", "loop.gif"] {
+            std::fs::copy(fixtures.join(picture), directory.join(picture))
+                .expect("a picture beside it");
+        }
         path
     }
 
@@ -851,7 +866,8 @@ mod tests {
     /// to be written in pieces, so leaving the caret on through one is the writer watching
     /// it wander off and come back — which is what a gif does every time it turns.
     ///
-    /// So: nothing of a frame goes out while the caret is on the screen, and it comes back
+    /// So: the whole of a frame is one synchronized update, nothing of it goes out while
+    /// the caret is on the screen, and the caret comes back — inside the update still —
     /// only once the last of the frame has gone.
     #[test]
     fn keeps_the_caret_off_the_screen_while_a_frame_is_written() {
@@ -878,13 +894,124 @@ mod tests {
         let sent = wire.sent();
         forget(&path);
 
-        assert_eq!(at(&sent, HIDE), Some(0), "the caret is off before a byte of it goes out");
+        assert!(sent.starts_with(OPEN), "the frame does not open the update it is sent in");
+        assert!(sent.ends_with(CLOSE), "the frame does not close it");
+        assert_eq!(
+            at(&sent, HIDE),
+            Some(OPEN.len()),
+            "the caret is off before a byte of the frame goes out"
+        );
         let shown = at(&sent, SHOW).expect("and back on once it has gone");
-        // What is left after it comes back is putting it where it belongs, and nothing
-        // else: anything more would be drawn with the caret on it.
-        let tail = &sent[shown + SHOW.len()..];
+        // What is left after it comes back is putting it where it belongs and closing the
+        // update, and nothing else: anything more would be drawn with the caret on it.
+        let tail = &sent[shown + SHOW.len()..sent.len() - CLOSE.len()];
         assert!(tail.starts_with(b"\x1b["), "only the caret being put back comes after");
         assert!(tail.len() <= 11, "{} bytes drawn with the caret on them", tail.len());
+    }
+
+    /// Opening and closing a synchronized update: between the two the terminal keeps
+    /// showing what it last presented, whatever it is being sent.
+    const OPEN: &[u8] = b"\x1b[?2026h";
+    const CLOSE: &[u8] = b"\x1b[?2026l";
+
+    /// What the caret did on the screen, in order, starting from the screen being entered
+    /// with it on. A caret taken off and put back inside one synchronized update never
+    /// reaches the screen at all, so it is not in here; one taken off outside of one is,
+    /// and every `false` in what comes back is a blink the writer saw.
+    fn caret_on_the_screen(sent: &[u8]) -> Vec<bool> {
+        let mut screen = vec![true];
+        let mut within = false;
+        let mut held = true;
+        let mut at = 0;
+        while at < sent.len() {
+            let rest = &sent[at..];
+            let (step, caret) = if rest.starts_with(OPEN) {
+                (held, within) = (*screen.last().expect("the screen starts somewhere"), true);
+                (OPEN.len(), None)
+            } else if rest.starts_with(CLOSE) {
+                within = false;
+                (CLOSE.len(), Some(held))
+            } else if rest.starts_with(HIDE) {
+                (HIDE.len(), Some(false))
+            } else if rest.starts_with(SHOW) {
+                (SHOW.len(), Some(true))
+            } else {
+                (1, None)
+            };
+            match caret {
+                Some(caret) if within => held = caret,
+                Some(caret) if caret != *screen.last().expect("the screen starts somewhere") => {
+                    screen.push(caret);
+                }
+                _ => {}
+            }
+            at += step;
+        }
+        screen
+    }
+
+    /// Every frame goes out with the caret off and ends with ratatui putting it back, and
+    /// a frame goes out every time the loop looks up from the keyboard — four times a
+    /// second with nobody touching it. Off and on again, four times a second, is the
+    /// caret blinking at a writer who is doing nothing at all.
+    #[test]
+    fn does_not_blink_the_caret_while_nothing_is_happening() {
+        let path = document("still-caret", "A paragraph with nothing happening to it.\n");
+        let mut app = app(&path);
+        let wire = Wire::default();
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(wire.clone()),
+            TerminalOptions { viewport: Viewport::Fixed(Rect::new(0, 0, 80, 20)) },
+        )
+        .expect("a test screen");
+
+        for _ in 0..10 {
+            app.send(&mut terminal).expect("a frame");
+        }
+        let screen = caret_on_the_screen(&wire.sent());
+        forget(&path);
+
+        assert_eq!(screen, vec![true], "the caret went off the screen and came back");
+    }
+
+    /// The same, with a gif on the screen, which is where it is worst: a turn resends the
+    /// screenful under the picture, so the frames are long as well as often — ten a
+    /// second, each one taking the caret off and giving it back.
+    #[test]
+    fn does_not_blink_the_caret_while_a_gif_turns() {
+        let path = document("gif-caret", "Words\n\n![a gif](loop.gif)\n");
+        let mut app = app(&path);
+        let wire = Wire::default();
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(wire.clone()),
+            TerminalOptions { viewport: Viewport::Fixed(Rect::new(0, 0, 80, 20)) },
+        )
+        .expect("a test screen");
+
+        for _ in 0..500 {
+            app.send(&mut terminal).expect("a frame");
+            if !app.document.pictures().is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!app.document.pictures().is_empty(), "the gif was never read");
+        // Long enough for it to turn several times, at a frame every twentieth of a
+        // second, which is about what a writer leaning on nothing gets.
+        wire.clear();
+        for _ in 0..20 {
+            std::thread::sleep(Duration::from_millis(50));
+            app.send(&mut terminal).expect("a frame");
+        }
+        let sent = wire.sent();
+        let screen = caret_on_the_screen(&sent);
+        forget(&path);
+
+        // A turn resends the screenful the picture stands in, which is the long frame the
+        // caret was seen wandering through. Without one this has tested the short frames
+        // twenty times over and the frame that matters not at all.
+        assert!(sent.len() > 2_000, "the gif never turned: {} bytes over 20 frames", sent.len());
+        assert_eq!(screen, vec![true], "the caret went off the screen and came back");
     }
 
     #[test]
