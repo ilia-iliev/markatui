@@ -30,7 +30,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 use std::fs;
-use std::io::{self, Stdout};
+use std::io::{self, Stdout, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -213,17 +213,39 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> io::Result<()> {
         while !self.quit {
-            terminal.draw(|frame| self.draw(frame))?;
+            self.send(terminal)?;
             self.wait()?;
         }
         self.remember();
         Ok(())
     }
 
+    /// Send one frame, with the caret off the screen while it goes.
+    ///
+    /// A frame does not arrive all at once. It goes out in pieces as the buffer behind
+    /// stdout fills, and the terminal draws each piece as it comes; the caret is the
+    /// terminal's own and sits wherever the writing has got to. A short frame is written
+    /// and done with before that can be seen, but a screenful resent under a picture is
+    /// not short — and a gif makes one of those every time it turns, ten times a second.
+    /// The caret is then watched wandering off into the document and coming back.
+    ///
+    /// Ratatui puts it back where it belongs, but only once the last piece has gone out,
+    /// which is too late to not have been seen. So it is taken away first; ratatui's own
+    /// draw is what gives it back, at the end, where it was always going to.
+    fn send<W: Write>(&mut self, terminal: &mut Terminal<CrosstermBackend<W>>) -> io::Result<()> {
+        terminal.hide_cursor()?;
+        terminal.draw(|frame| self.draw(frame))?;
+        Ok(())
+    }
+
     /// Take the next keystroke, or, where none comes, let the checker have its say. The
-    /// deadline is what a Qt timer was: 400 ms after the typing stops.
+    /// deadline is what a Qt timer was: 400 ms after the typing stops, or sooner where a
+    /// gif on the screen is due to turn — that one comes whether or not the writer
+    /// touches the keyboard, and the soonest of the two is the one waited for.
     fn wait(&mut self) -> io::Result<()> {
-        let deadline = self.typed_at.map(|at| SETTLE.saturating_sub(at.elapsed()));
+        let settle = self.typed_at.map(|at| SETTLE.saturating_sub(at.elapsed()));
+        let turn = self.gallery.due().map(|at| at.saturating_duration_since(Instant::now()));
+        let deadline = settle.into_iter().chain(turn).min();
         if event::poll(deadline.unwrap_or(TICK))? {
             match event::read()? {
                 Event::Key(key) => self.press(key),
@@ -680,7 +702,9 @@ mod tests {
     use super::*;
     use crate::editor::Motion;
     use ratatui::backend::TestBackend;
+    use ratatui::{TerminalOptions, Viewport};
     use ratatui_image::picker::Picker;
+    use std::sync::{Arc, Mutex};
 
     /// A document of its own, so that a test writing into it disturbs nothing else, with
     /// the sample picture beside it for the block that names one.
@@ -775,6 +799,41 @@ mod tests {
             .collect()
     }
 
+    /// What the terminal is sent, kept in the order it arrives: escapes, cells and all.
+    /// A screen buffer says what a frame came to; this says how it got there, which is
+    /// where the caret being left on the screen shows up.
+    #[derive(Clone, Default)]
+    struct Wire(Arc<Mutex<Vec<u8>>>);
+
+    impl Wire {
+        fn clear(&self) {
+            self.0.lock().expect("the wire").clear();
+        }
+
+        fn sent(&self) -> Vec<u8> {
+            self.0.lock().expect("the wire").clone()
+        }
+    }
+
+    impl io::Write for Wire {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().expect("the wire").extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Taking the caret off the screen, and putting it back.
+    const HIDE: &[u8] = b"\x1b[?25l";
+    const SHOW: &[u8] = b"\x1b[?25h";
+
+    fn at(sent: &[u8], escape: &[u8]) -> Option<usize> {
+        sent.windows(escape.len()).position(|window| window == escape)
+    }
+
     /// Frames until the picture has been read, which waits on a thread coming back.
     fn until_the_picture_lands(app: &mut App, terminal: &mut Terminal<TestBackend>) -> Vec<String> {
         for _ in 0..500 {
@@ -785,6 +844,47 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         panic!("the picture was never read");
+    }
+
+    /// A frame does not arrive all at once, and the caret is the terminal's own: it sits
+    /// wherever the writing has got to. A screenful resent under a picture is long enough
+    /// to be written in pieces, so leaving the caret on through one is the writer watching
+    /// it wander off and come back — which is what a gif does every time it turns.
+    ///
+    /// So: nothing of a frame goes out while the caret is on the screen, and it comes back
+    /// only once the last of the frame has gone.
+    #[test]
+    fn keeps_the_caret_off_the_screen_while_a_frame_is_written() {
+        let path = document("caret", "moving\n\n![a picture](image.png)");
+        let mut app = app(&path);
+        let wire = Wire::default();
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(wire.clone()),
+            TerminalOptions { viewport: Viewport::Fixed(Rect::new(0, 0, 80, 20)) },
+        )
+        .expect("a test screen");
+
+        // Up to the frame that first draws the picture, which is the frame that resends
+        // the screen — the long one, and the one the caret was seen wandering through.
+        for _ in 0..500 {
+            wire.clear();
+            app.send(&mut terminal).expect("a frame");
+            if !app.document.pictures().is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!app.document.pictures().is_empty(), "the picture was never read");
+        let sent = wire.sent();
+        forget(&path);
+
+        assert_eq!(at(&sent, HIDE), Some(0), "the caret is off before a byte of it goes out");
+        let shown = at(&sent, SHOW).expect("and back on once it has gone");
+        // What is left after it comes back is putting it where it belongs, and nothing
+        // else: anything more would be drawn with the caret on it.
+        let tail = &sent[shown + SHOW.len()..];
+        assert!(tail.starts_with(b"\x1b["), "only the caret being put back comes after");
+        assert!(tail.len() <= 11, "{} bytes drawn with the caret on them", tail.len());
     }
 
     #[test]
