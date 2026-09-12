@@ -1,9 +1,10 @@
 //! The clipboard, which is two of them: the machine's own, where the editor is running on
 //! one with a display server, and OSC 52, which reaches the terminal on the other end of
-//! an ssh connection. Copy goes to both. Paste reads the machine's own, and falls back on
-//! what was last copied here — OSC 52 cannot be read back, so over ssh the editor's own
-//! copies are the ones its paste can reach. A picture is the machine's own clipboard
-//! alone: there is no OSC 52 for one, and nothing here keeps a copy of one.
+//! an ssh connection. Copy goes to whichever of the two is there, the machine's own
+//! first. Paste reads the machine's own, and falls back on what was last copied here —
+//! OSC 52 cannot be read back, so over ssh the editor's own copies are the ones its paste
+//! can reach. A picture is the machine's own clipboard alone: there is no OSC 52 for one,
+//! and nothing here keeps a copy of one.
 
 use crossterm::clipboard::CopyToClipboard;
 use crossterm::execute;
@@ -34,16 +35,18 @@ impl Clipboard {
         Clipboard { system: arboard::Clipboard::new().ok(), own: String::new() }
     }
 
-    /// Copy, to every clipboard there is. OSC 52 goes last on purpose: a terminal that
-    /// takes it owns the clipboard afterwards, and its ownership outlives the editor,
-    /// where ours ends with the process. A terminal with OSC 52 turned off ignores it
-    /// silently and leaves the copy above standing, which is the whole arrangement — one
-    /// of the two always works, and there is nothing to detect.
+    /// Copy, to the one clipboard that can be reached. The machine's own where the editor
+    /// runs beside a display server; OSC 52 where it does not, which is the ssh case.
+    /// Both at once is one copy too many: on X11 the terminal answers the OSC 52 by
+    /// taking the same selection we have just taken, sees us holding it when it checks,
+    /// and calls that a failure. What is copied outlives the editor either way: over ssh
+    /// the terminal goes on holding it, and here it is handed to the clipboard manager on
+    /// the way out.
     pub fn copy(&mut self, text: String) {
-        if let Some(system) = &mut self.system {
-            let _ = system.set_text(&text);
+        let copied = self.system.as_mut().is_some_and(|system| system.set_text(&text).is_ok());
+        if !copied {
+            let _ = execute!(io::stdout(), CopyToClipboard::to_clipboard_from(text.clone()));
         }
-        let _ = execute!(io::stdout(), CopyToClipboard::to_clipboard_from(text.clone()));
         self.own = text;
     }
 
@@ -81,5 +84,49 @@ impl Clipboard {
             .write_image(&picture.bytes, width, height, ExtendedColorType::Rgba8)
             .ok()?;
         Some(png)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+
+    /// What a copy wrote to the terminal. The escape goes to standard output and nowhere
+    /// else, so that is taken away for the length of the copy and read back afterwards.
+    fn sent(copy: impl FnOnce()) -> String {
+        let path = std::env::temp_dir().join(format!("markatui-copy-{}", std::process::id()));
+        let file = std::fs::File::create(&path).expect("a file to catch standard output in");
+        // SAFETY: standard output is put back from the duplicate taken of it here, before
+        // the file it was pointed at is closed.
+        let text = unsafe {
+            let stdout = libc::dup(1);
+            libc::dup2(file.as_raw_fd(), 1);
+            copy();
+            io::stdout().flush().ok();
+            libc::dup2(stdout, 1);
+            libc::close(stdout);
+            std::fs::read_to_string(&path).expect("what the copy wrote")
+        };
+        std::fs::remove_file(&path).ok();
+        text
+    }
+
+    /// One copy, never two. Where the machine has a clipboard the copy is already on it
+    /// and the escape is not sent: a terminal that took it would go for the very
+    /// selection this process has just taken, and would be told it had lost it. Where
+    /// there is none — over ssh — the escape is all there is, and it goes.
+    #[test]
+    fn sends_the_escape_only_where_the_machine_has_no_clipboard() {
+        let mut clipboard = Clipboard::open();
+        let machine = clipboard.system.is_some();
+        // Whoever is running the tests was using this clipboard before they started.
+        let held = clipboard.words();
+
+        let written = sent(|| clipboard.copy("copied".into()));
+
+        assert_eq!(written.contains("\x1b]52;"), !machine, "{written:?}");
+        clipboard.copy(held);
     }
 }
