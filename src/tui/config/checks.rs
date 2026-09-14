@@ -11,11 +11,7 @@
 //! leave the same file.
 
 use crate::lint;
-use crate::storage;
 use crate::tui::config;
-
-use std::fs;
-use std::io;
 
 const TABLE: &str = "[checks]";
 
@@ -45,15 +41,7 @@ pub fn set(name: &str, on: bool) -> Result<(), String> {
     if !lint::has_rule(name) {
         return Err(format!("there is no check called {name:?}"));
     }
-    let path = config::path()?;
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        // No config yet is the ordinary case, and this is the first line of one.
-        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(format!("{}: {error}", path.display())),
-    };
-    storage::write_atomic(&path, spoken_for(&text, name, on).as_bytes())
-        .map_err(|error| format!("{}: {error}", path.display()))
+    config::rewrite(|text| spoken_for(text, name, on))
 }
 
 /// `text` with `name` turned on or off in it. A line that already spoke for this check is
@@ -61,38 +49,7 @@ pub fn set(name: &str, on: bool) -> Result<(), String> {
 /// things — and otherwise the setting goes under `[checks]`, opening the table if there
 /// is none.
 fn spoken_for(text: &str, name: &str, on: bool) -> String {
-    let setting = format!("{name} = {on}");
-    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    let mut header = None;
-    let mut inside = false;
-    for (at, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            inside = trimmed == TABLE;
-            header = header.or(inside.then_some(at));
-            continue;
-        }
-        if inside && trimmed.split('=').next().is_some_and(|key| key.trim() == name) {
-            lines[at] = setting;
-            return joined(lines);
-        }
-    }
-    match header {
-        Some(at) => lines.insert(at + 1, setting),
-        None => {
-            if lines.last().is_some_and(|line| !line.trim().is_empty()) {
-                lines.push(String::new());
-            }
-            lines.extend([TABLE.to_string(), setting]);
-        }
-    }
-    joined(lines)
-}
-
-fn joined(lines: Vec<String>) -> String {
-    let mut text = lines.join("\n");
-    text.push('\n');
-    text
+    config::setting_in(text, Some(TABLE), name, &on.to_string(), &[])
 }
 
 #[cfg(test)]

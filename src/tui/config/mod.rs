@@ -24,7 +24,7 @@
 
 pub mod checks;
 pub mod keymap;
-mod lines;
+mod syntax;
 
 use crate::lint;
 use crate::storage;
@@ -101,7 +101,10 @@ pub fn set_theme(name: &str) -> Result<(), String> {
         format!("there is no theme called {name:?}; choose light, dark, or terminal")
     })?;
     // This older setting would otherwise undo a selected preset later in the file.
-    rewrite(|text| setting_in(text, "theme", theme.name(), &["inherit_background"]))
+    rewrite(|text| {
+        let value = format!("\"{}\"", theme.name());
+        setting_in(text, None, "theme", &value, &["inherit_background"])
+    })
 }
 
 /// Put the config back to the defaults, and say which file that was. The file goes rather
@@ -130,21 +133,24 @@ fn rewrite(change: impl FnOnce(&str) -> String) -> Result<(), String> {
         .map_err(|error| format!("{}: {error}", path.display()))
 }
 
-/// One root setting written into the config: the line already setting it is the line
-/// changed, and where there is none the setting goes in at the top. The keys in `stale`
-/// are dropped, being settings the new one would otherwise be fighting with further
-/// down the file.
-fn setting_in(text: &str, key: &str, value: &str, stale: &[&str]) -> String {
-    let setting = format!("{key} = \"{value}\"");
+/// One setting written into the config, `value` spelled the way TOML wants it read back.
+/// `table` is the `[header]` the setting lives under, or `None` for one at the root of the
+/// file. The line already setting it is the line changed — a second one would leave the
+/// file saying both things — and where there is none the setting goes in at the top of its
+/// table. The keys in `stale` are dropped, being settings the new one would otherwise be
+/// fighting with further down the file.
+fn setting_in(text: &str, table: Option<&str>, key: &str, value: &str, stale: &[&str]) -> String {
+    let setting = format!("{key} = {value}");
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    let mut in_root = true;
+    let mut inside = table.is_none();
     let mut found = false;
     lines.retain_mut(|line| {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
-            in_root = false;
+            inside = table == Some(trimmed);
+            return true;
         }
-        if !in_root {
+        if !inside {
             return true;
         }
         let named = trimmed.split('=').next().map(str::trim).unwrap_or_default();
@@ -159,11 +165,30 @@ fn setting_in(text: &str, key: &str, value: &str, stale: &[&str]) -> String {
         !stale.contains(&named)
     });
     if !found {
-        lines.insert(0, setting);
+        open_at(&mut lines, table, setting);
     }
     let mut result = lines.join("\n");
     result.push('\n');
     result
+}
+
+/// Where a setting the file did not already have goes in: the top of the table it belongs
+/// to, or the top of the file for one at the root. A table the file has no header for is
+/// opened at the end, a blank line away from whatever came last.
+fn open_at(lines: &mut Vec<String>, table: Option<&str>, setting: String) {
+    let Some(table) = table else {
+        lines.insert(0, setting);
+        return;
+    };
+    match lines.iter().position(|line| line.trim() == table) {
+        Some(at) => lines.insert(at + 1, setting),
+        None => {
+            if lines.last().is_some_and(|line| !line.trim().is_empty()) {
+                lines.push(String::new());
+            }
+            lines.extend([table.to_string(), setting]);
+        }
+    }
 }
 
 /// Read the config and keep it for the rest of the run. What comes back is what could not
@@ -196,7 +221,7 @@ pub fn get() -> &'static Config {
 fn read(text: &str) -> (Config, Vec<String>) {
     let mut config = Config::default();
     let mut table = String::new();
-    let problems = lines::walk(storage::CONFIG_FILE, text, |line| {
+    let problems = syntax::walk(storage::CONFIG_FILE, text, |line| {
         if let Some(name) = line.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
             table = name.trim().to_string();
             if !matches!(table.as_str(), "palette" | "checks") {
@@ -244,7 +269,7 @@ fn unknown(key: &str) -> String {
 }
 
 fn string(value: &str) -> Result<&str, String> {
-    lines::quoted(value).ok_or_else(|| format!("{value} is not in quotes"))
+    syntax::quoted(value).ok_or_else(|| format!("{value} is not in quotes"))
 }
 
 fn theme(value: &str) -> Result<Theme, String> {
@@ -389,11 +414,11 @@ mod tests {
             "content_width = 80\ninherit_background = true\n\n[palette]\naccent = \"#010203\"\n";
         let stale = &["inherit_background"];
         assert_eq!(
-            setting_in(text, "theme", "dark", stale),
+            setting_in(text, None, "theme", "\"dark\"", stale),
             "theme = \"dark\"\ncontent_width = 80\n\n[palette]\naccent = \"#010203\"\n"
         );
         assert_eq!(
-            setting_in("theme = \"light\"\n", "theme", "terminal", stale),
+            setting_in("theme = \"light\"\n", None, "theme", "\"terminal\"", stale),
             "theme = \"terminal\"\n"
         );
     }

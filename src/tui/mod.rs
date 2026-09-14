@@ -2,13 +2,14 @@
 //! document is scrolled, what the writer is being asked, and the column a run of up and
 //! down movement is aiming for.
 
-pub mod clipboard;
+mod act;
+pub(crate) mod clipboard;
 pub mod config;
 pub mod images;
-pub mod keys;
+pub(crate) mod keys;
 mod mouse;
-pub mod open;
-pub mod probe;
+mod pictures;
+pub(crate) mod probe;
 mod scroll;
 mod status;
 mod terminal;
@@ -16,14 +17,14 @@ pub mod theme;
 pub mod view;
 
 use crate::active::Step;
-use crate::editor::{Editor, Field};
+use crate::editor::Editor;
+use crate::link;
 use crate::lint;
-use crate::parse;
-use crate::state;
 use crate::storage;
 use crate::tui::clipboard::{Clipboard, Paste};
 use crate::tui::images::Gallery;
 use crate::tui::keys::Action;
+use crate::tui::pictures::PastedPicture;
 use crate::tui::probe::Keyboard;
 use crossterm::event::{self, Event};
 use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
@@ -31,9 +32,8 @@ use crossterm::{execute, queue};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
-use std::fs;
 use std::io::{self, Stdout, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 /// How long a pause counts as having stopped typing. Long enough to type through the end
@@ -74,13 +74,6 @@ enum Mode {
     /// checker finishes with a block on a thread of its own, and what is under the cursor
     /// can change between the question and the answer.
     Muting(String),
-}
-
-struct PastedPicture {
-    path: PathBuf,
-    reference: String,
-    ordinal: usize,
-    saved: bool,
 }
 
 struct App {
@@ -171,7 +164,7 @@ impl App {
         };
         // Open the way the last run closed. A writer who turned the checker off did not
         // mean only for that afternoon.
-        if let Some(word) = state::recall_mode() {
+        if let Some(word) = storage::recall_mode() {
             app.set_mode(&word);
         }
         app.note_hoisted();
@@ -207,7 +200,7 @@ impl App {
     /// Note what the next run should pick up: where the cursor was left, and which mode.
     fn remember(&self) {
         self.editor.remember_position();
-        state::remember_mode(self.mode_word());
+        storage::remember_mode(self.mode_word());
     }
 
     fn loop_until_quit(
@@ -313,112 +306,6 @@ impl App {
         self.note_hoisted();
     }
 
-    /// Enter, which ends the block. A terminal that cannot tell Shift+Enter from Enter
-    /// leaves the writer one key for the two things, so there it keeps the older rule: a
-    /// first press leaves a line break and a second ends the block.
-    fn enter(&mut self) {
-        match self.keyboard {
-            Keyboard::Kitty => self.edit(Editor::enter),
-            Keyboard::Legacy => self.edit(Editor::enter_or_break),
-        }
-    }
-
-    fn act_editing(&mut self, action: Action) {
-        match action {
-            Action::Type(text) => self.edit(|editor| editor.insert(&text)),
-            Action::Delete(step) => self.edit(|editor| editor.delete(step)),
-            Action::Enter => self.enter(),
-            Action::LineBreak => self.edit(Editor::line_break),
-            Action::Tab(step) => self.edit(|editor| editor.tab(step)),
-            Action::Surround(marker) => self.edit(|editor| editor.surround(marker)),
-            Action::Tag(tag) => self.edit(|editor| editor.wrap(tag)),
-            Action::Link(prefix) => self.edit(|editor| editor.insert_link(prefix)),
-            Action::OpenOrLink => self.open_or_link(),
-            Action::Mark(mark) => self.edit(|editor| editor.mark(mark)),
-            Action::Fence => self.edit(Editor::fence),
-            Action::Rule => self.edit(Editor::insert_rule),
-            Action::Table => self.edit(Editor::insert_table),
-            Action::Align(align) => self.edit(|editor| editor.align(align)),
-            Action::Cut => self.cut(),
-            Action::Undo => self.edit(Editor::undo),
-            Action::Redo => self.edit(Editor::redo),
-            Action::AcceptLint if self.grammar => self.edit(Editor::accept_lint),
-            Action::Learn if self.grammar => self.editor.learn(),
-            Action::MuteCheck if self.grammar => self.ask_to_mute(),
-            Action::CycleLint(step) if self.grammar => self.cycle_lint(step),
-            Action::CycleLint(step) => self.step_row(step, false),
-            Action::Move(motion, extend) => self.editor.move_cursor(motion, extend),
-            Action::Row(step, extend) => self.step_row(step, extend),
-            Action::Page(step) => self.page(step),
-            Action::SelectAll => self.editor.select_all(),
-            Action::Copy => self.copy(),
-            Action::Paste => self.paste(),
-            Action::Save => {
-                self.save();
-            }
-            Action::OpenSearch => {
-                self.editor.open_search();
-                self.mode = Mode::Searching;
-            }
-            Action::ToggleGrammar => {
-                self.grammar = !self.grammar;
-                if self.grammar {
-                    self.reading = false;
-                    self.editor.refresh_lint();
-                }
-            }
-            Action::ToggleReading => {
-                self.reading = !self.reading;
-                self.grammar = false;
-            }
-            Action::Quit => self.leave(),
-            _ => {}
-        }
-    }
-
-    fn act_searching(&mut self, action: Action) {
-        let mut typed = self.editor.field().to_string();
-        match action {
-            Action::Type(text) => typed.push_str(&text),
-            Action::Delete(_) => {
-                typed.pop();
-            }
-            Action::Tab(_) => return self.editor.switch_field(),
-            Action::CycleSearch(step) => return self.editor.cycle_search(step),
-            // Enter in the half holding the word says it is typed; in the half holding
-            // the replacement it is the swap being asked for.
-            Action::Enter if self.editor.search.field == Field::Replacement => {
-                return self.edit(Editor::replace_found);
-            }
-            Action::ReplaceAll => return self.edit(Editor::replace_all),
-            Action::Enter | Action::CloseSearch => {
-                self.editor.close_search();
-                self.mode = Mode::Editing;
-                return;
-            }
-            _ => return,
-        }
-        self.editor.type_into_field(&typed);
-    }
-
-    fn act_quitting(&mut self, action: Action) {
-        match action {
-            // A failed save keeps the editor open rather than losing the text.
-            Action::SaveAndQuit => self.quit = self.save(),
-            Action::DiscardAndQuit => self.quit = true,
-            Action::Cancel => self.mode = Mode::Editing,
-            _ => {}
-        }
-    }
-
-    fn act_muting(&mut self, action: Action) {
-        match action {
-            Action::MuteCheck => self.mute_check(),
-            Action::Cancel => self.mode = Mode::Editing,
-            _ => {}
-        }
-    }
-
     /// Something that changes the text. The checker is told the typing has started, and
     /// hears again once it stops.
     fn edit(&mut self, change: impl FnOnce(&mut Editor)) {
@@ -470,7 +357,7 @@ impl App {
         let Some(url) = self.editor.link_at_cursor() else {
             return self.edit(|editor| editor.insert_link(""));
         };
-        self.editor.error = open::url(&url).err();
+        self.editor.error = link::url(&url).err();
     }
 
     /// Copy and delete in one, which is what every editor means by cut. A cursor with
@@ -506,144 +393,19 @@ impl App {
         }
     }
 
-    /// A picture, which markdown has no way of holding: it is written beside the document
-    /// as a PNG of its own, and what goes into the block is the line naming that file.
-    fn paste_picture(&mut self, png: &[u8]) {
-        match storage::write_picture(self.editor.path(), png) {
-            Ok(file) => {
-                self.editor.error = None;
-                self.edit(|editor| editor.insert_picture(&file));
-                let ordinal = parse::image_paths(&self.editor.source())
-                    .iter()
-                    .position(|reference| reference == &file)
-                    .expect("the picture reference was just inserted");
-                let path =
-                    self.editor.path().parent().unwrap_or_else(|| Path::new(".")).join(&file);
-                self.pictures.push(PastedPicture { path, reference: file, ordinal, saved: false });
-            }
-            Err(error) => self.editor.error = Some(format!("Could not save the picture: {error}")),
-        }
-    }
-
-    /// Save the document and make the pasted files agree with its image references. This
-    /// is the only time a rename touches the filesystem, so typing a filename stays cheap.
+    /// Save the document and make the pasted files agree with its image references. The
+    /// renames go first and are put back where the document itself would not save: this is
+    /// the only time a rename touches the filesystem, so typing a filename stays cheap.
     fn save(&mut self) -> bool {
-        let desired = self.picture_references();
-        let mut targets = Vec::with_capacity(desired.len());
-        for (picture, reference) in self.pictures.iter().zip(&desired) {
-            let target = match reference {
-                Some(reference) => match picture_target(self.editor.path(), reference) {
-                    Ok(target) => Some(target),
-                    Err(_) => {
-                        self.editor.error =
-                            Some(format!("Could not rename the picture to {reference}"));
-                        return false;
-                    }
-                },
-                None => None,
-            };
-            if let Some(target) = &target
-                && target != &picture.path
-                && target.exists()
-            {
-                self.editor.error = Some(format!(
-                    "Could not rename the picture: {} already exists",
-                    target.display()
-                ));
-                return false;
-            }
-            targets.push(target);
-        }
-
-        let mut renamed = Vec::new();
-        for (picture, target) in self.pictures.iter().zip(&targets) {
-            let Some(target) = target else { continue };
-            if target == &picture.path {
-                continue;
-            }
-            if let Err(error) = fs::rename(&picture.path, target) {
-                for (from, to) in renamed.iter().rev() {
-                    let _ = fs::rename(from, to);
-                }
-                self.editor.error = Some(format!("Could not rename the picture: {error}"));
-                return false;
-            }
-            renamed.push((target.clone(), picture.path.clone()));
-        }
-
+        let Some(renamed) = self.rename_pictures() else {
+            return false;
+        };
         if !self.editor.save() {
-            for (from, to) in renamed.iter().rev() {
-                let _ = fs::rename(from, to);
-            }
+            renamed.undo();
             return false;
         }
-
-        for ((picture, reference), target) in self.pictures.iter_mut().zip(&desired).zip(targets) {
-            if let (Some(reference), Some(target)) = (reference, target) {
-                picture.path = target;
-                picture.reference = reference.clone();
-                picture.saved = true;
-            }
-        }
-        for (picture, reference) in self.pictures.iter().zip(&desired) {
-            if reference.is_none()
-                && let Err(error) = fs::remove_file(&picture.path)
-                && error.kind() != io::ErrorKind::NotFound
-            {
-                self.editor.error =
-                    Some(format!("Could not remove the unreferenced picture: {error}"));
-            }
-        }
-        let mut index = 0;
-        self.pictures.retain(|_| {
-            let keep = desired[index].is_some();
-            index += 1;
-            keep
-        });
+        self.settle_pictures(renamed);
         true
-    }
-
-    /// Match a pasted picture by its current name first, then by the image's position.
-    /// The latter is what makes editing only the destination count as a rename.
-    fn picture_references(&self) -> Vec<Option<String>> {
-        let references = parse::image_paths(&self.editor.source());
-        let mut claimed = vec![false; references.len()];
-        let mut desired = vec![None; self.pictures.len()];
-
-        for (index, picture) in self.pictures.iter().enumerate() {
-            let found = references
-                .iter()
-                .enumerate()
-                .filter(|(at, reference)| {
-                    !reference.is_empty() && !claimed[*at] && *reference == &picture.reference
-                })
-                .min_by_key(|(at, _)| at.abs_diff(picture.ordinal));
-            if let Some((at, reference)) = found {
-                claimed[at] = true;
-                desired[index] = Some(reference.clone());
-            }
-        }
-        for (index, picture) in self.pictures.iter().enumerate() {
-            if desired[index].is_none()
-                && picture.ordinal < references.len()
-                && !references[picture.ordinal].is_empty()
-                && !claimed[picture.ordinal]
-            {
-                claimed[picture.ordinal] = true;
-                desired[index] = Some(references[picture.ordinal].clone());
-            }
-        }
-        desired
-    }
-
-    /// Pictures introduced since the last successful save belong to discarded edits.
-    fn discard_pictures(&mut self) {
-        for picture in &self.pictures {
-            if !picture.saved {
-                let _ = fs::remove_file(&picture.path);
-            }
-        }
-        self.pictures.retain(|picture| picture.saved);
     }
 
     /// Ctrl+Q, Esc or Ctrl+D. A document with unsaved work asks first, with the three
@@ -710,15 +472,6 @@ impl App {
             y += height;
         }
     }
-}
-
-fn picture_target(document: &Path, reference: &str) -> io::Result<PathBuf> {
-    let relative = Path::new(reference);
-    let mut components = relative.components();
-    if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "picture names must be filenames"));
-    }
-    Ok(document.parent().unwrap_or_else(|| Path::new(".")).join(relative))
 }
 
 #[cfg(test)]
@@ -1187,7 +940,7 @@ mod tests {
     #[test]
     fn opens_in_the_mode_the_last_run_was_left_in() {
         let path = document("remembered-mode", "A document.\n");
-        let held = state::recall_mode();
+        let held = storage::recall_mode();
 
         let mut left = app(&path);
         left.act(Action::ToggleReading);
@@ -1202,7 +955,7 @@ mod tests {
         assert_eq!(opened.mode_word(), "grammar-off");
 
         if let Some(held) = held {
-            state::remember_mode(&held);
+            storage::remember_mode(&held);
         }
         forget(&path);
     }

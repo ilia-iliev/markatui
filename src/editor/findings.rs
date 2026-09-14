@@ -220,9 +220,7 @@ impl Editor {
     fn look_again(&mut self) {
         self.store_active();
         let needle = self.search.needle.clone();
-        let found = self.search.found.look_for(&self.blocks, &needle);
-        self.search.alone = false;
-        self.show_occurrence(found);
+        self.search_for(&needle);
     }
 
     pub fn search_for(&mut self, needle: &str) {

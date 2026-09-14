@@ -1,3 +1,10 @@
+//! Where everything the editor keeps outside the document lives, and how it is written:
+//! the writer's own files — config, keymap, dictionary — and the small notes the editor
+//! leaves itself between runs, the block the cursor was in and the mode it closed in.
+//!
+//! The notes are written behind the writer's back, so they are read back leniently: a
+//! store that is missing or unreadable is a run with nothing to carry over, not a failure.
+
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -28,14 +35,14 @@ pub fn dictionary() -> Option<PathBuf> {
 
 /// The block the cursor was left in, a file to a line. Kept apart from the config
 /// because the writer never writes it and never has to keep it.
-pub fn cursors() -> Option<PathBuf> {
+fn cursors() -> Option<PathBuf> {
     Some(state_dir()?.join("cursors"))
 }
 
 /// The mode the editor was last left in, and nothing else: one word, the whole file. It
 /// is the writer's doing but not their setting — they change it with a key, not by
 /// editing anything — so it lives here rather than in the config.
-pub fn mode() -> Option<PathBuf> {
+fn mode() -> Option<PathBuf> {
     Some(state_dir()?.join("mode"))
 }
 
@@ -132,6 +139,58 @@ pub fn replace(path: &Path, contents: &[u8]) {
     if let Err(error) = write_atomic(path, contents) {
         eprintln!("markatui: {}: {error}", path.display());
     }
+}
+
+/// Files whose cursor position is worth remembering, most recent first.
+const CURSOR_LIMIT: usize = 200;
+
+/// The block the cursor was left in last time this file was open.
+pub fn recall(path: &Path) -> Option<usize> {
+    let path = path.to_string_lossy();
+    cursor_entries().into_iter().find(|(known, _)| *known == path).map(|(_, index)| index)
+}
+
+pub fn remember(path: &Path, index: usize) {
+    let Some(store) = cursors() else {
+        return;
+    };
+    let path = path.to_string_lossy().to_string();
+    let mut kept = vec![(path.clone(), index)];
+    kept.extend(cursor_entries().into_iter().filter(|(known, _)| *known != path));
+    kept.truncate(CURSOR_LIMIT);
+
+    let text: String = kept.iter().map(|(path, index)| format!("{index}\t{path}\n")).collect();
+    replace(&store, text.as_bytes());
+}
+
+fn cursor_entries() -> Vec<(String, usize)> {
+    let Some(store) = cursors() else {
+        return Vec::new();
+    };
+    let Ok(text) = fs::read_to_string(store) else {
+        return Vec::new();
+    };
+    text.lines().filter_map(cursor_entry).collect()
+}
+
+fn cursor_entry(line: &str) -> Option<(String, usize)> {
+    let (index, path) = line.split_once('\t')?;
+    Some((path.to_string(), index.parse().ok()?))
+}
+
+/// The mode the editor was left in, where a run has left one.
+pub fn recall_mode() -> Option<String> {
+    let store = mode()?;
+    let word = fs::read_to_string(store).ok()?;
+    Some(word.trim().to_string())
+}
+
+/// Note the mode so the next run opens the way this one closed.
+pub fn remember_mode(mode: &str) {
+    let Some(store) = self::mode() else {
+        return;
+    };
+    replace(&store, format!("{mode}\n").as_bytes());
 }
 
 #[cfg(test)]

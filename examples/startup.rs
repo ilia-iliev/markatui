@@ -19,6 +19,9 @@
 //! between them, so a gap in the timeline is a phase of the startup, and the phase that
 //! is costing the writer their patience is the widest gap.
 
+mod arguments;
+
+use arguments::number;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::FromRawFd;
@@ -77,11 +80,6 @@ fn editor() -> PathBuf {
         .and_then(Path::parent)
         .expect("an example is two directories down from the profile")
         .join("markatui")
-}
-
-fn number(arguments: &[String], flag: &str) -> Option<usize> {
-    let at = arguments.iter().position(|argument| argument == flag)?;
-    arguments.get(at + 1)?.parse().ok()
 }
 
 /// One run: the editor opened on `document` in a terminal of our own, up to the moment

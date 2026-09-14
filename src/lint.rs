@@ -154,7 +154,7 @@ pub fn generation() -> u64 {
 
 /// Return findings already worked out for this block. A miss schedules one and returns
 /// immediately; the generation change has the event loop ask again when it finishes.
-pub fn request_check(text: &str) -> Vec<Lint> {
+fn request_check(text: &str) -> Vec<Lint> {
     let Some(checker) = CHECKER.get().filter(|_| spell::ready()) else {
         return Vec::new();
     };

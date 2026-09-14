@@ -272,7 +272,7 @@ impl Gallery {
 /// Send every cell the editor drew again, whatever the last frame had in it. The cells a
 /// picture stands in are the terminal's own and are left out: they are marked to be
 /// skipped as it is drawn, and writing over them would rub it out.
-fn resend(frame: &mut Frame) {
+pub fn resend(frame: &mut Frame) {
     let area = frame.area();
     let buffer = frame.buffer_mut();
     for at in area.positions() {
@@ -339,7 +339,7 @@ fn lasts(frame: &image::Frame) -> Duration {
 /// The room a picture is given: as many cells as its pixels come to at this terminal's
 /// cell size, and never wider than the column. The height follows the width, because what
 /// is drawn there keeps the picture's proportions.
-fn fitted(picker: &Picker, image: &DynamicImage, width: u16) -> Size {
+pub fn fitted(picker: &Picker, image: &DynamicImage, width: u16) -> Size {
     let font = picker.font_size();
     let columns = (image.width().div_ceil(font.width as u32) as u16).max(1);
     let rows = (image.height().div_ceil(font.height as u32) as u16).max(1);

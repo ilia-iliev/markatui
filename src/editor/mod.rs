@@ -2,7 +2,9 @@
 //! makes of it, what the search is looking at, and the undo behind all of it. This is
 //! what the Qt front end held minus the Qt, so none of it knows there is a terminal.
 
+mod file;
 mod findings;
+mod markup;
 mod motion;
 mod undo;
 
@@ -11,23 +13,15 @@ pub use motion::Motion;
 
 use crate::active::{Active, Step};
 use crate::blocks::{self, Span};
-use crate::marks::{self, Align, Mark};
+use crate::marks;
 use crate::parse;
-use crate::state;
-use crate::storage;
 use crate::style;
-use crate::text::{byte_offset, length};
+use crate::text::length;
 use std::collections::VecDeque;
-use std::fs;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 use undo::Undo;
-
-/// The table a writer is given to fill in. Two columns and one row of them, which is the
-/// smallest thing that still reads as a table once it is drawn.
-const TABLE: &str = "| Heading | Heading |\n| --- | --- |\n|  |  |";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EditRun {
@@ -78,73 +72,6 @@ pub struct Editor {
 }
 
 impl Editor {
-    /// Open `path`, resolved against the working directory. A path that does not exist
-    /// yet starts an empty document that [`Editor::save`] will create.
-    pub fn open(path: &Path) -> Self {
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir().unwrap_or_default().join(path)
-        };
-        let path = resolve(&path);
-        let (source, error) = match fs::read_to_string(&path) {
-            Ok(source) => (source, None),
-            Err(error) if error.kind() == ErrorKind::NotFound => (String::new(), None),
-            Err(error) => {
-                (String::new(), Some(format!("Could not open {}: {error}", path.display())))
-            }
-        };
-
-        let seen = modified(&path);
-        let mut editor = Editor::read(&source, path, error);
-        editor.unreadable = editor.error.is_some();
-        editor.seen = seen;
-        let last = editor.blocks.len() - 1;
-        // Pick up where the last session left off in this file, or at its end.
-        editor.settle_in(state::recall(&editor.path).unwrap_or(last).min(last));
-        editor.record_cursor();
-        editor
-    }
-
-    /// A document made out of `source`. Any picture the writer left among the words is
-    /// broken out into a paragraph of its own before the cursor ever reaches the block it
-    /// was left in: that is where a terminal can draw it, and the writer opened the file
-    /// to look at the picture. The document then says something the file does not, which
-    /// is why it opens with work to save.
-    ///
-    /// The blank lines a run of them left between two blocks become empty paragraphs at
-    /// the same time. That one costs nothing to save: the source is cut in more places,
-    /// not changed.
-    fn read(source: &str, path: PathBuf, error: Option<String>) -> Self {
-        let mut segments = parse::segments(source);
-        let hoisted = blocks::hoist_document(&mut segments);
-        blocks::open_paragraphs_document(&mut segments);
-        let blocks: Vec<Arc<String>> = segments.blocks.into_iter().map(Arc::new).collect();
-        let mut editor = Editor {
-            active: Active::new(&blocks[0], usize::MAX),
-            blocks,
-            gaps: segments.gaps.into_iter().map(Arc::new).collect(),
-            index: 0,
-            anchor: None,
-            undo: VecDeque::new(),
-            redo: Vec::new(),
-            revision: u64::from(hoisted),
-            saved_revision: 0,
-            edit_run: None,
-            settled: true,
-            hoisted,
-            path,
-            unreadable: false,
-            seen: None,
-            insisted: false,
-            error,
-            lint: LintState::default(),
-            search: SearchState::default(),
-        };
-        editor.record_cursor();
-        editor
-    }
-
     // ---- what the view reads ---------------------------------------------------
 
     pub fn blocks(&self) -> &[Arc<String>] {
@@ -416,120 +343,6 @@ impl Editor {
         true
     }
 
-    pub fn surround(&mut self, marker: &str) {
-        self.clear_spanning_selection();
-        self.active.surround(marker);
-        self.record_edit();
-    }
-
-    /// Underline, which markdown has no marker of its own for and HTML does.
-    pub fn wrap(&mut self, tag: &str) {
-        self.clear_spanning_selection();
-        self.active.wrap(tag);
-        self.record_edit();
-    }
-
-    /// Put a heading, a bullet, a number or a quote at the head of the lines the writer
-    /// is standing on, or take it off them.
-    pub fn mark(&mut self, mark: Mark) {
-        self.clear_spanning_selection();
-        self.active.mark_lines(mark);
-        self.record_edit();
-    }
-
-    pub fn fence(&mut self) {
-        self.clear_spanning_selection();
-        self.active.fence();
-        self.record_edit();
-    }
-
-    /// Set the column the cursor is in to read left, centre or right. Only a table has
-    /// columns; anywhere else the key does nothing rather than something surprising.
-    pub fn align(&mut self, align: Align) {
-        let Some((table, cursor)) = marks::aligned(self.active.text(), self.active.cursor(), align)
-        else {
-            return;
-        };
-        self.clear_spanning_selection();
-        self.active = Active::new(&table, cursor);
-        self.record_edit();
-    }
-
-    /// A rule of its own, with an empty paragraph under it for what comes next: a writer
-    /// asking for a rule is between two things, not at the end of the document.
-    pub fn insert_rule(&mut self) {
-        self.add_block("---");
-        self.add_block("");
-        self.record_edit();
-    }
-
-    /// A table to fill in, with the first heading selected to be typed over.
-    pub fn insert_table(&mut self) {
-        self.add_block(TABLE);
-        self.active.select(2, 9);
-        self.record_edit();
-    }
-
-    /// Put `text` in as a block of its own after the one the cursor is in, and move into
-    /// it. A block with nothing in it is used rather than pushed down: an empty paragraph
-    /// is where the writer already is.
-    fn add_block(&mut self, text: &str) {
-        self.clear_spanning_selection();
-        self.store_active();
-        if !self.blocks[self.index].trim().is_empty() {
-            self.blocks.insert(self.index + 1, Arc::new(String::new()));
-            self.gaps.insert(self.index + 1, Arc::new(blocks::PARAGRAPH.to_string()));
-            self.index += 1;
-        }
-        self.blocks[self.index] = Arc::new(text.to_string());
-        self.active = Active::new(&self.blocks[self.index], 0);
-    }
-
-    pub fn insert_link(&mut self, prefix: &str) {
-        self.clear_spanning_selection();
-        self.active.insert_link(prefix);
-        self.record_edit();
-    }
-
-    /// Where the link under the cursor points, if it is standing in one. The address is
-    /// as the writer wrote it; a relative one is resolved against the document, which is
-    /// the directory it was written relative to.
-    pub fn link_at_cursor(&self) -> Option<String> {
-        self.link_in(self.index, self.active.cursor())
-    }
-
-    /// The link `at` characters into block `index`, which is what a click on one asks
-    /// after: the block clicked in is not always the block the cursor is in.
-    pub fn link_in(&self, index: usize, at: usize) -> Option<String> {
-        let text = self.block(index);
-        let url = parse::link_at(text, byte_offset(text, at))?;
-        if url.contains("://") || url.starts_with('#') || url.starts_with("mailto:") {
-            return Some(url);
-        }
-        let beside = self.path.parent()?.join(&url);
-        Some(match beside.exists() {
-            true => beside.to_string_lossy().into_owned(),
-            false => url,
-        })
-    }
-
-    /// A picture that has just been written beside the document, named by the block it
-    /// goes in.
-    pub fn insert_picture(&mut self, file: &str) {
-        self.clear_spanning_selection();
-        self.active.insert_picture(file);
-        self.record_edit();
-    }
-
-    /// A selection that has left this block is let go before an edit that only makes
-    /// sense inside one: there is no wrapping a marker round several blocks.
-    fn clear_spanning_selection(&mut self) {
-        if self.anchor.is_some() {
-            self.anchor = None;
-            self.active.drop_selection();
-        }
-    }
-
     /// Re-read the block being edited now that the cursor is leaving it, splitting it
     /// where the writer has typed a blank line. Returns the change in the block count.
     fn commit(&mut self) -> isize {
@@ -594,84 +407,14 @@ impl Editor {
             self.blocks[self.index] = Arc::new(self.active.text().to_string());
         }
     }
-
-    // ---- the file --------------------------------------------------------------
-
-    /// The document as it would be written out.
-    pub fn source(&self) -> String {
-        let mut blocks = self.blocks.clone();
-        blocks[self.index] = Arc::new(self.active.text().to_string());
-        blocks::source(&blocks, &self.gaps)
-    }
-
-    /// Write the document out, unless doing so would lose text the editor never had.
-    /// A file that would not read is never written over, and a file that has changed on
-    /// disk since it was opened stops the first save and says so; the save after that
-    /// one goes through.
-    pub fn save(&mut self) -> bool {
-        if self.unreadable {
-            self.error = Some(format!(
-                "Not saving over {}: it would not open, so this document is not it",
-                self.path.display()
-            ));
-            return false;
-        }
-        if !self.insisted && self.seen != modified(&self.path) {
-            self.insisted = true;
-            self.error = Some(format!(
-                "{} has changed on disk. Save again to write over it",
-                self.path.display()
-            ));
-            return false;
-        }
-        self.store_active();
-        if let Err(error) = storage::write_atomic(&self.path, self.source().as_bytes()) {
-            let message = format!("Could not save {}: {error}", self.path.display());
-            eprintln!("markatui: {message}");
-            self.error = Some(message);
-            return false;
-        }
-        self.error = None;
-        self.seen = modified(&self.path);
-        self.insisted = false;
-        self.remember_position();
-        self.saved_revision = self.revision;
-        true
-    }
-
-    /// Note where the cursor is so the next session can pick it up.
-    pub fn remember_position(&self) {
-        state::remember(&self.path, self.index);
-    }
-}
-
-/// When the file was last written, or nothing where there is no file to ask about. The
-/// two cases a filesystem can answer with — no file, and no clock — are the same answer
-/// here: nothing to compare a later look against.
-fn modified(path: &Path) -> Option<SystemTime> {
-    fs::metadata(path).and_then(|metadata| metadata.modified()).ok()
-}
-
-/// The path with the symbolic links along it followed, so that saving replaces the file
-/// a link points at rather than the link itself. A file that does not exist yet is
-/// resolved as far as the directory it will be made in.
-fn resolve(path: &Path) -> PathBuf {
-    if let Ok(resolved) = fs::canonicalize(path) {
-        return resolved;
-    }
-    match (path.parent(), path.file_name()) {
-        (Some(parent), Some(name)) => match fs::canonicalize(parent) {
-            Ok(parent) => parent.join(name),
-            Err(_) => path.to_path_buf(),
-        },
-        _ => path.to_path_buf(),
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::lint;
+    use crate::marks::{Align, Mark};
+    use std::fs;
 
     /// A document made without touching the disk, opened the way a file is. The path is
     /// never written to, and the cursor starts at the top rather than wherever some other

@@ -22,15 +22,20 @@
 //!
 //! Press q or Esc to stop. What it prints on the way out is the verdict.
 
+mod arguments;
+
+use arguments::number;
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{execute, terminal};
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder, DynamicImage, Rgba, RgbaImage};
+// The gallery's own sizing and redraw, so that this goes on measuring the gallery when
+// they change.
+use markatui::tui::images::{fitted, resend};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::buffer::CellDiffOption;
-use ratatui::layout::{Rect, Size};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
@@ -192,21 +197,6 @@ fn filler(row: u16) -> String {
     (0..9).map(|word| WORDS[(row as usize + word) % WORDS.len()]).collect::<Vec<_>>().join(" ")
 }
 
-/// Every cell the loop drew, sent again — the gallery's own trick, and the reason a moving
-/// picture costs a screenful rather than a picture. The picture's cells are the terminal's
-/// and are left out: writing over them would rub it out.
-fn resend(frame: &mut Frame) {
-    let area = frame.area();
-    let buffer = frame.buffer_mut();
-    for at in area.positions() {
-        if let Some(cell) = buffer.cell_mut(at)
-            && cell.diff_option == CellDiffOption::None
-        {
-            cell.set_diff_option(CellDiffOption::AlwaysUpdate);
-        }
-    }
-}
-
 fn report(measured: &Measured, picker: &Picker, fps: u32) {
     let mut ticks = measured.ticks.clone();
     ticks.sort_unstable();
@@ -242,18 +232,6 @@ fn report(measured: &Measured, picker: &Picker, fps: u32) {
     if busy > 0.5 {
         println!("\nmore than half the loop is the picture. Typing is what pays for it.");
     }
-}
-
-/// The room the picture is given, as the gallery gives it: its pixels in cells, never
-/// wider than the column, and the height following the width.
-fn fitted(picker: &Picker, image: &DynamicImage, width: u16) -> Size {
-    let font = picker.font_size();
-    let columns = (image.width().div_ceil(font.width as u32) as u16).max(1);
-    let rows = (image.height().div_ceil(font.height as u32) as u16).max(1);
-    if columns <= width {
-        return Size::new(columns, rows);
-    }
-    Size::new(width, ((rows as u32 * width as u32) / columns as u32).max(1) as u16)
 }
 
 fn read(path: &str) -> Vec<DynamicImage> {
@@ -304,11 +282,6 @@ fn named(arguments: &[String]) -> Option<String> {
         return Some(argument.clone());
     }
     None
-}
-
-fn number(arguments: &[String], flag: &str) -> Option<usize> {
-    let at = arguments.iter().position(|argument| argument == flag)?;
-    arguments.get(at + 1)?.parse().ok()
 }
 
 /// Stdout with a tally on it. What a moving picture costs is measured in bytes, and this

@@ -111,7 +111,7 @@ pub fn hoist_images(blocks: &mut Vec<String>, separators: &mut Vec<String>) -> b
 /// of air between them, so a run of blank lines left in a gap is a run the writer never
 /// sees again. The gap is only cut in more places, never rewritten — the document still
 /// says exactly what the file says.
-pub fn open_paragraphs(blocks: &mut Vec<String>, separators: &mut Vec<String>) {
+fn open_paragraphs(blocks: &mut Vec<String>, separators: &mut Vec<String>) {
     // From the back, so that a separator becoming several leaves the ones still to be
     // looked at where they were.
     for index in (0..separators.len()).rev() {
@@ -147,15 +147,17 @@ fn paragraph_breaks(gap: &str) -> Vec<String> {
     breaks
 }
 
-/// The same over a whole document, whose gaps carry the source outside the blocks as well
-/// as the source between them.
-pub fn hoist_document(segments: &mut parse::Segments) -> bool {
-    between(segments, hoist_images)
-}
-
-/// The same over a whole document.
-pub fn open_paragraphs_document(segments: &mut parse::Segments) {
+/// A document put in the shape the editor works in: every picture among the words hoisted
+/// into a paragraph of its own, and every blank line over and above the one that ends a
+/// paragraph opened into an empty paragraph. `true` where a picture had to move, which is
+/// the one of the two that makes the document say something the file does not.
+///
+/// The gaps around the outside carry the source outside the blocks as well as the source
+/// between them; both passes leave them alone.
+pub fn normalise(segments: &mut parse::Segments) -> bool {
+    let hoisted = between(segments, hoist_images);
     between(segments, open_paragraphs);
+    hoisted
 }
 
 /// A pass over a document's blocks and the separators between them. What is around the
@@ -301,7 +303,7 @@ mod tests {
     #[test]
     fn keeps_the_gaps_at_the_ends_of_the_document_while_hoisting() {
         let mut segments = parse::segments("\n\nwords ![a](1.png)\n\nplain\n");
-        assert!(hoist_document(&mut segments));
+        assert!(normalise(&mut segments));
         assert_eq!(segments.blocks, ["words", "![a](1.png)", "plain"]);
         assert_eq!(segments.gaps, ["\n\n", "\n\n", "\n\n", "\n"]);
     }
@@ -346,7 +348,7 @@ mod tests {
     #[test]
     fn opens_the_blank_lines_of_a_document_but_not_its_edges() {
         let mut segments = parse::segments("\n\n\nfirst\n\n\n\nsecond\n\n\n");
-        open_paragraphs_document(&mut segments);
+        normalise(&mut segments);
         assert_eq!(segments.blocks, ["first", "", "second"]);
         assert_eq!(segments.gaps, ["\n\n\n", "\n\n", "\n\n", "\n\n\n"]);
     }

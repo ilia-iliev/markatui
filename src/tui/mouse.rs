@@ -4,7 +4,7 @@
 //! through, so a click lands where the caret would have.
 
 use super::{App, Mode};
-use crate::tui::open;
+use crate::link;
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::time::{Duration, Instant};
 
@@ -44,7 +44,7 @@ impl App {
         self.notice.clear();
         self.follow = true;
         if let Some(url) = self.clicked_link(event) {
-            self.editor.error = open::url(&url).err();
+            self.editor.error = link::url(&url).err();
             return;
         }
         let Some((index, within, column)) = self.landing(event) else { return };

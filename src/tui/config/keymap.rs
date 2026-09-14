@@ -1,6 +1,6 @@
 //! The editable keymap at `~/.config/markatui/keymap.toml`.
 
-use super::lines;
+use super::syntax;
 use crate::storage;
 use crate::tui::keys::{Binding, Keymap};
 
@@ -15,7 +15,7 @@ pub fn path() -> io::Result<PathBuf> {
 }
 
 /// Install the shipped keymap when this user does not have one yet.
-pub fn install() -> io::Result<PathBuf> {
+fn install() -> io::Result<PathBuf> {
     let path = path()?;
     if !path.exists() {
         write_shipped(&path)?;
@@ -99,19 +99,41 @@ fn spell(binding: Option<Binding>, absent: &str) -> String {
     binding.map_or_else(|| absent.to_string(), |binding| binding.to_string())
 }
 
+/// A line of the map as it is written down: the head of a section, or one command under
+/// it.
+enum Row {
+    Section(&'static str),
+    Binding(&'static str, Option<Binding>),
+}
+
+/// The map in the sections it is read in, a head before each. The listing and the file are
+/// both written out of this walk: a file the writer has edited and a file the editor has
+/// rewritten should be the same file.
+fn by_section(keymap: &Keymap) -> impl Iterator<Item = Row> + '_ {
+    let mut previous_section = None;
+    keymap.bindings().flat_map(move |(section, name, binding)| {
+        let head = (previous_section != Some(section)).then_some(Row::Section(section));
+        previous_section = Some(section);
+        head.into_iter().chain([Row::Binding(name, binding)])
+    })
+}
+
 fn format_for_display(keymap: &Keymap) -> String {
     let width = keymap.bindings().map(|(_, name, _)| name.len()).max().unwrap_or(0);
     let mut lines = Vec::new();
-    let mut previous_section = None;
-    for (section, name, binding) in keymap.bindings() {
-        if previous_section != Some(section) {
-            if previous_section.is_some() {
-                lines.push(String::new());
+    for row in by_section(keymap) {
+        match row {
+            // A blank line between the sections, but not above the first of them.
+            Row::Section(section) => {
+                if !lines.is_empty() {
+                    lines.push(String::new());
+                }
+                lines.push(section.to_string());
             }
-            lines.push(section.to_string());
-            previous_section = Some(section);
+            Row::Binding(name, binding) => {
+                lines.push(format!("  {name:<width$}  {}", spell(binding, "no key")));
+            }
         }
-        lines.push(format!("  {name:<width$}  {}", spell(binding, "no key")));
     }
     lines.push(String::new());
     lines.push(FIXED.to_string());
@@ -133,12 +155,12 @@ pub fn set(command: &str, key: &str) -> Result<(), String> {
 
 fn read(text: &str) -> (Keymap, Vec<String>) {
     let mut keymap = Keymap::default();
-    let problems = lines::walk(storage::KEYMAP_FILE, text, |line| {
+    let problems = syntax::walk(storage::KEYMAP_FILE, text, |line| {
         let Some((command, value)) = line.split_once('=') else {
             return Err(format!("{line:?} is not `command = \"key\"`"));
         };
         let (command, value) = (command.trim(), value.trim());
-        let Some(text) = lines::quoted(value) else {
+        let Some(text) = syntax::quoted(value) else {
             return Err(format!("{value} is not a key in quotes"));
         };
         // Nothing between the quotes is a command with no key on it, which is how a key
@@ -181,13 +203,13 @@ fn render(keymap: &Keymap) -> String {
     let mut text = String::from(
         "# markatui keymap. Change this file or run `markatui -keymap <command> <key>`.\n",
     );
-    let mut previous_section = None;
-    for (section, name, binding) in keymap.bindings() {
-        if previous_section != Some(section) {
-            text.push_str(&format!("\n# {section}\n"));
-            previous_section = Some(section);
+    for row in by_section(keymap) {
+        match row {
+            Row::Section(section) => text.push_str(&format!("\n# {section}\n")),
+            Row::Binding(name, binding) => {
+                text.push_str(&format!("{name} = \"{}\"\n", spell(binding, "")));
+            }
         }
-        text.push_str(&format!("{name} = \"{}\"\n", spell(binding, "")));
     }
     text
 }
