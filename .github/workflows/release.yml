@@ -36,6 +36,7 @@ jobs:
           name="markatui-${GITHUB_REF_NAME#v}-x86_64-unknown-linux-musl"
           mkdir "$name"
           cp target/x86_64-unknown-linux-musl/release/markatui README.md LICENSE "$name/"
+          ln -s markatui "$name/mrk"
           tar czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
 

@@ -68,6 +68,8 @@ assert_contains "$tmp/refused.out" "Install markatui in $tmp/prefix/bin?"
 run_installer 'y\nn\n' "$tmp/accepted.out"
 [ "$status" -eq 0 ] || fail "accepted installation failed"
 [ -x "$tmp/prefix/bin/markatui" ] || fail "binary was not installed"
+[ "$(readlink "$tmp/prefix/bin/mrk")" = markatui ] || fail "mrk was not linked to markatui"
+[ -x "$tmp/prefix/bin/mrk" ] || fail "mrk does not resolve to the installed binary"
 assert_contains "$tmp/accepted.out" "Use markatui as the default application for .md files?"
 if [ -e "$tmp/xdg-mime.log" ] && grep -F "default markatui.desktop text/markdown" "$tmp/xdg-mime.log" >/dev/null; then
     fail "declining changed the Markdown default"
@@ -77,6 +79,15 @@ desktop="$tmp/data/applications/markatui.desktop"
 assert_contains "$desktop" "Exec=\"$tmp/prefix/bin/markatui\" %f"
 assert_contains "$desktop" "MimeType=text/markdown;"
 [ ! -e "$tmp/config/markatui/keymap.toml" ] || fail "installer wrote application-owned config"
+
+# A mrk that belongs to something else is somebody's command, not a stale link of ours.
+rm "$tmp/prefix/bin/mrk"
+cp /bin/true "$tmp/prefix/bin/mrk"
+run_installer 'y\nn\n' "$tmp/short-taken.out"
+[ "$status" -eq 0 ] || fail "install beside an occupied mrk failed"
+[ ! -L "$tmp/prefix/bin/mrk" ] || fail "replaced an unrelated mrk"
+assert_contains "$tmp/short-taken.out" "$tmp/prefix/bin/mrk is already something else"
+rm "$tmp/prefix/bin/mrk"
 
 # An existing command is never overwritten without confirmation.
 cp "$tmp/prefix/bin/markatui" "$tmp/before-refusal"

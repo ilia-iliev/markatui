@@ -58,6 +58,17 @@ fi
 install -D -m 755 "$binary" "$destination"
 echo "markatui: installed $destination"
 
+# A short name to type, as a link beside the command rather than a second copy of it.
+# The link is relative, and to the name rather than the file, so it survives the pair
+# being moved and follows the copy being replaced by the build link below.
+short="$prefix/bin/mrk"
+if { [ -e "$short" ] || [ -L "$short" ]; } && [ "$(readlink "$short")" != markatui ]; then
+    echo "markatui: $short is already something else; left it alone" >&2
+else
+    ln -sfn markatui "$short"
+    echo "markatui: linked $short to markatui"
+fi
+
 # Cargo keeps every artifact it has ever built, so a repeatedly rebuilt target
 # directory grows without bound. Hold it to a budget, discarding least recent first.
 # A budget rather than an age: artifacts of daily builds are never old enough to expire.

@@ -20,6 +20,8 @@ From a checkout, the installer builds a release binary, puts it in `~/.local/bin
 
 Building from source needs Rust 1.95 or newer.
 
+`mrk` is installed beside `markatui` as a link to it, so `mrk README.md` is the short way in. Either name works.
+
 ## Keys
 
 ```sh
