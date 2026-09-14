@@ -48,10 +48,11 @@ impl App {
     }
 
     /// The word being looked for and what is going in its place, one line each, with the
-    /// half the writer is typing into carrying the caret. Which occurrence of how many
-    /// sits at the far edge of the column, so that the count stays put while the word is
-    /// typed; asking for another occurrence of a word that has only the one moves
-    /// nothing, and that is the answer given instead.
+    /// half the writer is typing into carrying the caret, and under them the keys that
+    /// half answers to. Which occurrence of how many sits at the far edge of the column,
+    /// so that the count stays put while the word is typed; asking for another occurrence
+    /// of a word that has only the one moves nothing, and that is the answer given
+    /// instead.
     fn search_lines(&self, width: u16) -> Vec<String> {
         let search = &self.editor.search;
         let counter = match () {
@@ -62,16 +63,24 @@ impl App {
                 None => "no matches".into(),
             },
         };
+        // The labels are padded to a width so that the two halves line up under one
+        // another and read as one bar rather than two lines that happen to be near.
         vec![
-            self.search_line("FIND", &search.needle, Field::Needle, &counter, width),
-            self.search_line(
-                "SWAP",
-                &search.replacement,
-                Field::Replacement,
-                "[tab] [enter] [ctrl+a all]",
-                width,
-            ),
+            self.search_line("FIND   ", &search.needle, Field::Needle, &counter, width),
+            self.search_line("REPLACE", &search.replacement, Field::Replacement, "", width),
+            self.search_keys(),
         ]
+    }
+
+    /// The keys the half being typed into answers to, said as what they do. Only that
+    /// half's keys are listed: a writer still typing the word being looked for has no use
+    /// for being told how to replace it. Tab and Esc are not among them — moving on and
+    /// backing out are what those keys do everywhere.
+    fn search_keys(&self) -> String {
+        match self.editor.search.field {
+            Field::Needle => "ctrl+↓ next   ctrl+↑ prev".into(),
+            Field::Replacement => "enter this one   ctrl+a all".into(),
+        }
     }
 
     /// One half of the bar: what it is for, what has been typed into it, and what it has
@@ -86,6 +95,11 @@ impl App {
     ) -> String {
         let caret = if self.editor.search.field == field { "_" } else { "" };
         let left = format!("{label} {typed}{caret}");
+        // A half with nothing to say for itself is the line as it was typed, with no
+        // padding run out to a far edge that is holding nothing.
+        if note.is_empty() {
+            return left;
+        }
         let room = (theme::content_width().min(width) as usize)
             .saturating_sub(left.chars().count() + note.chars().count());
         format!("{left}{}{note}", " ".repeat(room.max(2)))

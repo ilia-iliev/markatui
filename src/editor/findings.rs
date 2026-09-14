@@ -45,8 +45,8 @@ pub enum Field {
 pub struct SearchState {
     pub open: bool,
     pub needle: String,
-    /// What the writer is putting in place of the word, which stays between searches:
-    /// the same swap is usually wanted more than once.
+    /// What the writer is putting in place of the word. Like the word, it is gone the
+    /// next time the bar is opened: a search is one piece of work, start to finish.
     pub replacement: String,
     pub field: Field,
     pub count: usize,
@@ -131,9 +131,11 @@ impl Editor {
 
     // ---- the search ------------------------------------------------------------
 
-    /// Open the search bar. The block being edited is re-read first: where a word turns
-    /// up is worked out over the blocks as they will be once it is rendered again, so
-    /// that walking to an occurrence never finds the document has moved underneath it.
+    /// Open the search bar, empty: what was looked for last time is not what is wanted
+    /// now, and a bar that comes up holding it is a bar to be cleared before it is used.
+    /// The block being edited is re-read first: where a word turns up is worked out over
+    /// the blocks as they will be once it is rendered again, so that walking to an
+    /// occurrence never finds the document has moved underneath it.
     pub fn open_search(&mut self) {
         self.store_active();
         self.commit();
@@ -142,8 +144,9 @@ impl Editor {
         self.clear_selection();
         self.search.open = true;
         self.search.alone = false;
-        let needle = self.search.needle.clone();
-        self.search_for(&needle);
+        self.search.field = Field::Needle;
+        self.search.replacement.clear();
+        self.search_for("");
     }
 
     /// The occurrence walked to is left selected: it is usually the very thing the

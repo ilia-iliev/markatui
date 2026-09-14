@@ -87,7 +87,7 @@ Always
   select               shift with any of them
 
 In the find bar
-  swap fields          tab
+  move between fields  tab
   replace this one     enter
   replace them all     ctrl+a
   next, previous       ctrl+down, ctrl+up

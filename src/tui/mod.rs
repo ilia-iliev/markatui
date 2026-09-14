@@ -994,6 +994,41 @@ mod tests {
         forget(&path);
     }
 
+    /// A search is one piece of work: the bar comes up empty however much was typed into
+    /// it last time, and the keys under it are the keys the half being typed into
+    /// answers to.
+    #[test]
+    fn opens_the_search_bar_with_nothing_left_in_it() {
+        let path = document("fresh", "a cat and a cat");
+        let mut app = app(&path);
+        app.act(Action::OpenSearch);
+        for letter in "cat".chars() {
+            app.act(Action::Type(letter.to_string()));
+        }
+        app.act(Action::Tab(1));
+        for letter in "dog".chars() {
+            app.act(Action::Type(letter.to_string()));
+        }
+        app.act(Action::CloseSearch);
+
+        app.act(Action::OpenSearch);
+        assert_eq!(app.editor.search.needle, "");
+        assert_eq!(app.editor.search.replacement, "");
+        assert_eq!(app.editor.search.count, 0);
+
+        let footer = app.footer(90);
+        assert!(footer[0].starts_with("FIND    _"), "{footer:#?}");
+        assert!(footer[1].starts_with("REPLACE "), "{footer:#?}");
+        assert!(footer[2].contains("ctrl+↓ next"), "{footer:#?}");
+
+        // The other half answers to other keys, and says so once the caret is in it.
+        app.act(Action::Tab(1));
+        let footer = app.footer(90);
+        assert!(footer[2].contains("enter this one"), "{footer:#?}");
+        assert!(!footer[2].contains("next"), "{footer:#?}");
+        forget(&path);
+    }
+
     /// Cut is copy and delete in one. With nothing selected there is nothing to cut, and
     /// the key leaves the document where it was rather than eating a character.
     #[test]
