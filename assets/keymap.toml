@@ -45,6 +45,8 @@ quote_block = "ctrl+shift+q"
 code_block = "ctrl+shift+k"
 horizontal_rule = "alt+r"
 insert_table = "ctrl+t"
+move_section_up = "alt+up"
+move_section_down = "alt+down"
 
 # Align
 align_left = "ctrl+shift+l"

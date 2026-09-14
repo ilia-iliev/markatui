@@ -34,6 +34,7 @@ impl App {
             Action::OpenOrLink => self.open_or_link(),
             Action::Mark(mark) => self.edit(|editor| editor.mark(mark)),
             Action::Fence => self.edit(Editor::fence),
+            Action::MoveSection(step) => self.edit(|editor| editor.move_section(step)),
             Action::Rule => self.edit(Editor::insert_rule),
             Action::Table => self.edit(Editor::insert_table),
             Action::Align(align) => self.edit(|editor| editor.align(align)),

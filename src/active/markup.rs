@@ -109,7 +109,7 @@ impl Active {
     /// and a selection stays over the lines it was on. `false` where nothing changed.
     fn rewrite_lines(&mut self, change: impl Fn(&[&str]) -> Vec<String>) -> bool {
         let selected = self.selection().is_some();
-        let (start, end) = self.touched_lines();
+        let (start, end) = self.touched_edges();
         let text = self.slice(start, end).to_string();
         let lines: Vec<&str> = text.split('\n').collect();
         let marked = change(&lines);
@@ -141,9 +141,17 @@ impl Active {
 
     /// The whole of every line the cursor or the selection touches. Marking a line is a
     /// change to the line, not to the part of it that happens to be selected.
-    fn touched_lines(&self) -> (usize, usize) {
+    fn touched_edges(&self) -> (usize, usize) {
         let (from, to) = self.selection().unwrap_or((self.cursor, self.cursor));
         (self.line_bounds(from).0, self.line_bounds(to).1)
+    }
+
+    /// The same lines, counted from the top of the block: which line a change to whole
+    /// lines starts on, and which it ends on.
+    pub fn touched_lines(&self) -> (usize, usize) {
+        let (start, end) = self.touched_edges();
+        let first = self.slice(0, start).matches('\n').count();
+        (first, first + self.slice(start, end).matches('\n').count())
     }
 
     /// The list item the cursor is standing in, if it is standing in one.

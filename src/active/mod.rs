@@ -223,6 +223,21 @@ impl Active {
         true
     }
 
+    /// Which line of the block the cursor is on, and how far into it, both counted in
+    /// characters.
+    pub fn position(&self) -> (usize, usize) {
+        let (start, _) = self.line_bounds(self.cursor);
+        (self.slice(0, start).matches('\n').count(), self.cursor - start)
+    }
+
+    /// Where `column` characters into line `line` falls, or the end of that line where it
+    /// is shorter than that. A line past the foot of the block is the end of the block.
+    pub fn offset(&self, line: usize, column: usize) -> usize {
+        let mut lines = self.text.split('\n');
+        let before: usize = lines.by_ref().take(line).map(|line| length(line) + 1).sum();
+        lines.next().map_or(self.length(), |text| before + column.min(length(text)))
+    }
+
     /// Where the source line holding `at` begins and ends, in characters.
     fn line_bounds(&self, at: usize) -> (usize, usize) {
         let characters: Vec<char> = self.text.chars().collect();

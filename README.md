@@ -28,7 +28,7 @@ markatui -keymap bold_selection ctrl+b
 markatui -keymap default          # put them all back
 ```
 
-The defaults are conventional: Ctrl+S saves, Ctrl+Z undoes, Ctrl+B bolds. Ctrl+K on a link follows it instead of making one, handing it to `xdg-open`. Ctrl+R switches to reading mode, where the block under the cursor renders like every other one and the checker stays quiet. Copy/paste uses the machine's clipboard.
+The defaults are conventional: Ctrl+S saves, Ctrl+Z undoes, Ctrl+B bolds. Alt+Up and Alt+Down move the section under the cursor - the list item and whatever is nested under it, the table row, the line of code - and the whole block where its lines have nowhere left to go. Ctrl+K on a link follows it instead of making one, handing it to `xdg-open`. Ctrl+R switches to reading mode, where the block under the cursor renders like every other one and the checker stays quiet. Copy/paste uses the machine's clipboard.
 
 ## Terminals
 

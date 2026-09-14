@@ -6,6 +6,7 @@ mod file;
 mod findings;
 mod markup;
 mod motion;
+mod sections;
 mod undo;
 
 pub use findings::{Field, LintState, SearchState};
@@ -419,7 +420,7 @@ mod tests {
     /// A document made without touching the disk, opened the way a file is. The path is
     /// never written to, and the cursor starts at the top rather than wherever some other
     /// session left it. Nothing has settled: the checker has its say once a test asks.
-    fn document(source: &str) -> Editor {
+    pub(super) fn document(source: &str) -> Editor {
         let mut editor = Editor::read(source, PathBuf::from("/nowhere/post.md"), None);
         editor.settled = false;
         editor.active.place(0);
@@ -427,7 +428,7 @@ mod tests {
         editor
     }
 
-    fn texts(editor: &Editor) -> Vec<String> {
+    pub(super) fn texts(editor: &Editor) -> Vec<String> {
         (0..editor.blocks.len()).map(|index| editor.block(index).to_string()).collect()
     }
 

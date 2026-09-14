@@ -137,6 +137,19 @@ fn unquoted(line: &str) -> String {
     format!("{}{}", &line[..at], rest.strip_prefix(' ').unwrap_or(rest))
 }
 
+/// The line with the number the line at `like` carries, where both are numbered items.
+/// A number says where an item stands in its list rather than which item it is: an item
+/// that moves leaves the numbers reading 1, 2, 3 down the page, and a list the writer
+/// wrote as 1, 1, 1 is left the way they wrote it.
+pub fn renumbered(line: &str, like: &str) -> String {
+    let prefix = lead(line);
+    let like = lead(like);
+    let (Marker::Numbered(_), Marker::Numbered(number)) = (&prefix.marker, &like.marker) else {
+        return line.to_string();
+    };
+    format!("{}{number} {}", head(line, &prefix), body(line, &prefix))
+}
+
 /// The marker to carry onto the line Enter opens, for a line that is a list item.
 pub struct Item {
     /// What goes at the head of the new line: the same indent and quotes, and the marker

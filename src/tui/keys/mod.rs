@@ -63,6 +63,9 @@ pub enum Action {
     Mark(Mark),
     /// The block in or out of a fenced code block.
     Fence,
+    /// The section under the cursor one place up or down: the list item, the table row,
+    /// the line of code, or the whole block where the lines cannot move among themselves.
+    MoveSection(Step),
     Rule,
     Table,
     Align(Align),
@@ -245,6 +248,19 @@ const COMMANDS: &[Command] = &[
     },
     Command { section: "Blocks", name: "horizontal_rule", default: "alt+r", action: Action::Rule },
     Command { section: "Blocks", name: "insert_table", default: "ctrl+t", action: Action::Table },
+    // Alt with the arrows, the way every editor that moves a line about spells it.
+    Command {
+        section: "Blocks",
+        name: "move_section_up",
+        default: "alt+up",
+        action: Action::MoveSection(-1),
+    },
+    Command {
+        section: "Blocks",
+        name: "move_section_down",
+        default: "alt+down",
+        action: Action::MoveSection(1),
+    },
     // The word processors' three keys, and the only alignment markdown has any way of
     // writing down: which way a table's column reads.
     Command {
@@ -545,6 +561,16 @@ mod tests {
         // The shifted keys are the unshifted ones' neighbours, and must not be them.
         assert_eq!(control(KeyCode::Char('b')), Action::Surround("**"));
         assert_eq!(control(KeyCode::Char('q')), Action::Quit);
+    }
+
+    /// Alt with the arrows moves the section rather than the cursor, which the plain
+    /// arrows keep.
+    #[test]
+    fn moves_a_section_on_alt_with_the_arrows() {
+        assert_eq!(editing(press(KeyCode::Up, KeyModifiers::ALT)), Action::MoveSection(-1));
+        assert_eq!(editing(press(KeyCode::Down, KeyModifiers::ALT)), Action::MoveSection(1));
+        assert_eq!(plain(KeyCode::Up), Action::Row(-1, false));
+        assert_eq!(control(KeyCode::Up), Action::CycleLint(-1));
     }
 
     #[test]

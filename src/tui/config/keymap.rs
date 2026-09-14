@@ -260,6 +260,7 @@ mod tests {
         assert!(text.contains("Formatting\n  bold_selection       ctrl+b"), "{text}");
         assert!(text.contains("  strike_selection     alt+s"), "{text}");
         assert!(text.contains("Blocks\n  bullet_list          ctrl+shift+b"), "{text}");
+        assert!(text.contains("  move_section_up      alt+up"), "{text}");
         assert!(text.contains("Align\n  align_left           ctrl+shift+l"), "{text}");
         assert!(text.contains("Suggestions\n  previous_suggestion  ctrl+up"), "{text}");
     }
