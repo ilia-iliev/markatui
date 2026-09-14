@@ -6,8 +6,6 @@ Mostly WYSIWYG - the block under the cursor is shown as raw Markdown in some cas
 
 ![markatui started from a terminal and the cursor walking down the sample document: each block shows its raw Markdown as the cursor arrives and renders again as it leaves, the checker names a misspelt word at the foot of the screen and the letter it is missing is typed in, and the picture is drawn by the terminal](docs/demo.gif)
 
-This is based off [blogawrite](https://github.com/ilia-iliev/blogawrite) - similar concept, but a standalone editor.
-
 ## Install
 
 A static binary is attached to each [release](https://github.com/ilia-iliev/markatui/releases) - download it, unpack it, put it on your PATH.
