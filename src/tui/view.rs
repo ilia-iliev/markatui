@@ -228,7 +228,12 @@ pub(super) fn draw_with_caret(
         );
     }
 
-    if let Some((row, at)) = document.caret()
+    // A caret is a cell with its two colours swapped, whichever of the two draws it, and
+    // a selected cell is already those two colours swapped: the character the caret is
+    // against would come back out in the page's own colours and read as the one character
+    // of the selection that was left out of it. So while a selection is running the caret
+    // comes off, and the shape is left whole with its own edge saying where the caret is.
+    if let Some((row, at)) = document.caret().filter(|_| !selection.running)
         && row >= scroll
         && row < scroll + area.height as usize
     {

@@ -763,6 +763,31 @@ mod tests {
         assert_eq!(at(&sent, OPEN), None, "an unsupported synchronized update was opened");
     }
 
+    /// A terminal's own caret is a block that swaps the two colours of the cell it stands
+    /// on, and a selected cell is already those two colours swapped: the character the
+    /// caret is against comes back out in the page's own colours and reads as the one
+    /// character of the selection that was left out of it. So the caret comes off while a
+    /// selection is running, and the selection is left whole.
+    #[test]
+    fn leaves_the_native_caret_off_a_selected_character() {
+        let path = document("selected-caret", "A paragraph with a selection in it.\n");
+        let mut app = app(&path);
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).expect("a test screen");
+        app.editor.activate(0, 10);
+        app.editor.move_cursor(Motion::LineEdge(-1), true);
+
+        frame(&mut app, &mut terminal);
+        let (row, column) = app.document.caret().expect("a drawn caret");
+        let cell = &terminal.backend().buffer()
+            [(app.column.x + column, row.saturating_sub(app.scroll) as u16)];
+        let selected = cell.style().add_modifier.contains(ratatui::style::Modifier::REVERSED);
+        let native = terminal.backend().cursor_visible();
+        forget(&path);
+
+        assert!(selected, "the first character of the selection was not painted as selected");
+        assert!(!native, "the terminal's caret was left standing on a selected character");
+    }
+
     #[test]
     fn paints_a_caret_where_the_native_one_stays_hidden() {
         let path = document("painted-caret", "A paragraph.\n");
