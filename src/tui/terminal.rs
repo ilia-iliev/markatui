@@ -1,6 +1,6 @@
 //! Taking the terminal over and giving it back: raw mode, a screen of our own, bracketed
-//! paste, the mouse, the page colour in padding outside the cell grid, and the kitty
-//! keyboard flags where the terminal answers for them.
+//! paste, the mouse, the page colour in padding outside the cell grid, the name in the
+//! title bar, and the kitty keyboard flags where the terminal answers for them.
 
 use crate::tui::config;
 use crate::tui::probe::{Capabilities, Keyboard};
@@ -35,6 +35,7 @@ const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
 pub(super) fn start(
     capabilities: Capabilities,
     background: Option<Color>,
+    name: &str,
 ) -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, event::EnableBracketedPaste)?;
@@ -56,6 +57,7 @@ pub(super) fn start(
     if let Some(command) = background_commands(background).0 {
         io::stdout().write_all(command.as_bytes())?;
     }
+    io::stdout().write_all(title_command(name).as_bytes())?;
     Terminal::new(CrosstermBackend::new(io::stdout()))
 }
 
@@ -66,6 +68,7 @@ pub(super) fn stop(capabilities: Capabilities, background: Option<Color>) -> io:
     if let Some(command) = background_commands(background).1 {
         io::stdout().write_all(command.as_bytes())?;
     }
+    io::stdout().write_all(TITLE_BACK.as_bytes())?;
     // Crossterm's own, on the way out: it turns off more than was asked for, which is the
     // safe direction to be wrong in, and the mouse is the terminal's again either way.
     if config::get().mouse {
@@ -73,6 +76,20 @@ pub(super) fn stop(capabilities: Capabilities, background: Option<Color>) -> io:
     }
     execute!(io::stdout(), event::DisableBracketedPaste, cursor::Show, LeaveAlternateScreen)?;
     terminal::disable_raw_mode()
+}
+
+/// The title the writer's shell left on the terminal, put on the terminal's own stack on
+/// the way in and taken back off it on the way out. A terminal that keeps no such stack
+/// ignores both and is left with the file's name, which is the same place every editor
+/// that writes a title leaves it.
+const TITLE_STACK: &str = "\x1b[22;0t";
+const TITLE_BACK: &str = "\x1b[23;0t";
+
+/// OSC 2 is what a terminal puts in its title bar. The file's name goes there and not its
+/// path: the writer knows which of their files they opened, and a window strip or a tab
+/// has room for a name and not for a path.
+fn title_command(name: &str) -> String {
+    format!("{TITLE_STACK}\x1b]2;{name}\x1b\\")
 }
 
 /// OSC 11 changes the terminal's default background, including padding beyond its cell
@@ -90,6 +107,11 @@ fn background_commands(background: Option<Color>) -> (Option<String>, Option<&'s
 mod tests {
     use super::*;
     use ratatui::style::Color;
+
+    #[test]
+    fn the_file_name_goes_in_the_title_bar_over_the_one_that_was_there() {
+        assert_eq!(title_command("post.md"), "\x1b[22;0t\x1b]2;post.md\x1b\\");
+    }
 
     #[test]
     fn explicit_paper_colours_the_terminal_padding_and_is_reset_afterwards() {

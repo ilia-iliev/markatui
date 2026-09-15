@@ -129,7 +129,7 @@ pub fn run(path: &Path) -> io::Result<()> {
     lint::preload(&config::get().checks);
     let capabilities = probe::ask();
     let background = theme::terminal_background();
-    let mut terminal = terminal::start(capabilities, background)?;
+    let mut terminal = terminal::start(capabilities, background, &name(path))?;
     // The picker is asked for once the screen is ours: the terminal answers the question
     // by writing to it, and this way it is our screen that gets written on.
     let mut app = App::open(path, Gallery::new(probe::pictures(), path), capabilities.keyboard);
@@ -141,6 +141,15 @@ pub fn run(path: &Path) -> io::Result<()> {
     app.discard_pictures();
     terminal::stop(capabilities, background)?;
     result
+}
+
+/// What to call the file in the title bar: its name, or the whole path where it has no
+/// name to give — a path ending in `..` has none.
+fn name(path: &Path) -> String {
+    match path.file_name() {
+        Some(name) => name.to_string_lossy().into_owned(),
+        None => path.display().to_string(),
+    }
 }
 
 impl App {
