@@ -110,6 +110,24 @@ impl App {
         }
     }
 
+    /// The answer to the file having changed under the writer. Saying yes writes over
+    /// it, and where the save was on the way out the quit goes on: the writer asked to
+    /// leave, and the question was only ever about the file.
+    pub(super) fn act_overwriting(&mut self, action: Action) {
+        let Mode::Overwriting(leaving) = self.mode else {
+            return;
+        };
+        match action {
+            Action::Save => {
+                self.mode = Mode::Editing;
+                self.editor.overwrite();
+                self.quit = self.save() && leaving;
+            }
+            Action::Cancel => self.mode = Mode::Editing,
+            _ => {}
+        }
+    }
+
     pub(super) fn act_muting(&mut self, action: Action) {
         match action {
             Action::MuteCheck => self.mute_check(),

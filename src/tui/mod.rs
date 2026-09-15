@@ -69,6 +69,10 @@ enum Mode {
     Editing,
     Searching,
     Quitting,
+    /// Somebody else has written the file since it was opened, waiting on the writer to
+    /// say whether to go over them. The flag is whether the save was on the way out, so
+    /// that saying yes finishes the quit that asked for it.
+    Overwriting(bool),
     /// The check the writer has asked to be rid of, waiting on them to say they mean it.
     /// The name is held here rather than read back off the cursor when they answer: the
     /// checker finishes with a block on a thread of its own, and what is under the cursor
@@ -285,6 +289,7 @@ impl App {
             Mode::Editing => keys::editing(key),
             Mode::Searching => keys::searching(key),
             Mode::Quitting => keys::quitting(key),
+            Mode::Overwriting(_) => keys::overwriting(key),
             Mode::Muting(_) => keys::muting(key),
         };
         self.act(action);
@@ -300,6 +305,7 @@ impl App {
         match self.mode {
             Mode::Searching => self.act_searching(action),
             Mode::Quitting => self.act_quitting(action),
+            Mode::Overwriting(_) => self.act_overwriting(action),
             Mode::Muting(_) => self.act_muting(action),
             Mode::Editing => self.act_editing(action),
         }
@@ -396,7 +402,15 @@ impl App {
     /// Save the document and make the pasted files agree with its image references. The
     /// renames go first and are put back where the document itself would not save: this is
     /// the only time a rename touches the filesystem, so typing a filename stays cheap.
+    ///
+    /// A file somebody else has written since it was opened is not gone over without
+    /// asking. The question goes up at the foot of the screen and the save waits on the
+    /// answer, which is the writer's to give.
     fn save(&mut self) -> bool {
+        if self.editor.changed_on_disk() {
+            self.mode = Mode::Overwriting(self.mode == Mode::Quitting);
+            return false;
+        }
         let Some(renamed) = self.rename_pictures() else {
             return false;
         };
@@ -1468,10 +1482,11 @@ mod tests {
         forget(&path);
     }
 
-    /// Quitting over a file somebody else has written asks again rather than going quiet
-    /// and taking the answer: the editor stays up with what happened at the foot of it.
+    /// Quitting over a file somebody else has written asks rather than going quiet and
+    /// taking the answer. The question is the file's alone — the quit prompt is off the
+    /// screen by then — and saying yes finishes the quit that asked for it.
     #[test]
-    fn a_quit_over_a_changed_file_asks_a_second_time() {
+    fn a_quit_over_a_changed_file_asks_before_writing_over_it() {
         let path = document("quit-changed", "A document.");
         let mut app = app(&path);
         app.act(Action::Type("X".into()));
@@ -1480,12 +1495,33 @@ mod tests {
 
         app.act(Action::SaveAndQuit);
         assert!(!app.quit, "the editor quit over somebody else's work");
-        assert!(app.footer(90)[0].contains("changed on disk"), "{:?}", app.footer(90));
+        let asked = ["post.md has external changes. Overwrite?", "[y] [n] [esc]"];
+        assert_eq!(app.footer(90), asked);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "Somebody else.");
 
-        app.act(Action::SaveAndQuit);
+        app.act(Action::Save);
         assert!(app.quit);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "XA document.");
+        forget(&path);
+    }
+
+    /// Saying no to that question leaves the file as somebody else wrote it and puts the
+    /// writer back in the document, with nothing left at the foot of the screen: backing
+    /// out of the quit is not an error to be told about.
+    #[test]
+    fn saying_no_to_overwriting_leaves_the_file_and_the_editor_alone() {
+        let path = document("keep-changed", "A document.");
+        let mut app = app(&path);
+        app.act(Action::Type("X".into()));
+        std::fs::write(&path, "Somebody else.").expect("the file changes under the editor");
+
+        app.act(Action::Save);
+        app.act(Action::Cancel);
+
+        assert!(!app.quit);
+        assert!(app.mode == Mode::Editing);
+        assert!(app.footer(90).is_empty(), "{:?}", app.footer(90));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Somebody else.");
         forget(&path);
     }
 }

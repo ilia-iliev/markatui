@@ -92,10 +92,22 @@ impl Editor {
         blocks::source(&blocks, &self.gaps)
     }
 
+    /// Whether somebody else has written the file since it was opened, so that saving
+    /// would go over them. It stays true until the writer says to write over it.
+    pub fn changed_on_disk(&self) -> bool {
+        !self.insisted && self.seen != modified(&self.path)
+    }
+
+    /// The writer's answer to that: write over the changes. The next save goes through,
+    /// and the one after it asks again.
+    pub fn overwrite(&mut self) {
+        self.insisted = true;
+    }
+
     /// Write the document out, unless doing so would lose text the editor never had.
-    /// A file that would not read is never written over, and a file that has changed on
-    /// disk since it was opened stops the first save and says so; the save after that
-    /// one goes through.
+    /// A file that would not read is never written over, and one somebody else has
+    /// written is not either until [`Editor::overwrite`] says so — the asking is the
+    /// caller's, because it is a question and not an error.
     pub fn save(&mut self) -> bool {
         if self.unreadable {
             self.error = Some(format!(
@@ -104,12 +116,7 @@ impl Editor {
             ));
             return false;
         }
-        if !self.insisted && self.seen != modified(&self.path) {
-            self.insisted = true;
-            self.error = Some(format!(
-                "{} has changed on disk. Save again to write over it",
-                self.path.display()
-            ));
+        if self.changed_on_disk() {
             return false;
         }
         self.store_active();

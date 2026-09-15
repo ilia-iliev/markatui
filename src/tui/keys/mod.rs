@@ -493,6 +493,19 @@ pub fn quitting(key: KeyEvent) -> Action {
     }
 }
 
+/// What a keystroke means while the writer is being asked whether to write over a file
+/// somebody else has changed. Yes is a save, which is what it comes to.
+pub fn overwriting(key: KeyEvent) -> Action {
+    if key.kind == KeyEventKind::Release {
+        return Action::Nothing;
+    }
+    match key.code {
+        KeyCode::Char('y' | 'Y') | KeyCode::Enter => Action::Save,
+        KeyCode::Char('n' | 'N') | KeyCode::Esc => Action::Cancel,
+        _ => Action::Nothing,
+    }
+}
+
 /// What a keystroke means while the writer is being asked whether a check should go.
 /// The same three answers as the quit prompt, so that a question at the foot of the
 /// screen is always answered the same way.

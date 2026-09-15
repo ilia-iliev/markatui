@@ -64,8 +64,8 @@ pub struct Editor {
     /// When the file was last seen — at open, and at every save. A file whose time has
     /// moved on since has been written by somebody else, and saving would go over them.
     seen: Option<SystemTime>,
-    /// Whether the writer has already been told the file changed under them. The save
-    /// after that one goes through: by then it is their decision, not an accident.
+    /// Whether the writer has said to write over the changes somebody else made. It
+    /// holds until that save has gone through, and then the file is watched again.
     insisted: bool,
     pub error: Option<String>,
     pub lint: LintState,
@@ -1255,8 +1255,9 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
-    /// A file written by somebody else since it was opened stops the first save. The
-    /// writer is told, and the next save goes through: by then it is their decision.
+    /// A file written by somebody else since it was opened stops the save. The caller
+    /// asks, and the save after the answer goes through: by then it is the writer's
+    /// decision.
     #[test]
     fn stops_the_first_save_over_a_file_that_changed_on_disk() {
         let directory = directory("changed");
@@ -1268,9 +1269,11 @@ mod tests {
         fs::write(&path, "somebody else\n").unwrap();
 
         assert!(!editor.save());
-        assert!(editor.error.as_deref().unwrap().contains("changed on disk"));
+        assert!(editor.changed_on_disk());
+        assert!(editor.error.is_none(), "a question was written down as an error");
         assert_eq!(fs::read_to_string(&path).unwrap(), "somebody else\n");
 
+        editor.overwrite();
         assert!(editor.save());
         assert_eq!(fs::read_to_string(&path).unwrap(), "oneX\n");
         fs::remove_dir_all(directory).unwrap();
