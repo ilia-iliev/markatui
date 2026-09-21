@@ -5,27 +5,16 @@
 //! ends a block while the writer is in the document and closes the search while they are
 //! in it — and the split is along the modes rather than along the keys.
 
-use crate::editor::{Editor, Field};
+use crate::editor::{Editor, Field, Motion};
 use crate::tui::keys::Action;
-use crate::tui::probe::Keyboard;
 use crate::tui::{App, Mode};
 
 impl App {
-    /// Enter, which ends the block. A terminal that cannot tell Shift+Enter from Enter
-    /// leaves the writer one key for the two things, so there it keeps the older rule: a
-    /// first press leaves a line break and a second ends the block.
-    fn enter(&mut self) {
-        match self.keyboard {
-            Keyboard::Kitty => self.edit(Editor::enter),
-            Keyboard::Legacy => self.edit(Editor::enter_or_break),
-        }
-    }
-
     pub(super) fn act_editing(&mut self, action: Action) {
         match action {
             Action::Type(text) => self.edit(|editor| editor.insert(&text)),
             Action::Delete(step) => self.edit(|editor| editor.delete(step)),
-            Action::Enter => self.enter(),
+            Action::Enter => self.edit(Editor::enter),
             Action::LineBreak => self.edit(Editor::line_break),
             Action::Tab(step) => self.edit(|editor| editor.tab(step)),
             Action::Surround(marker) => self.edit(|editor| editor.surround(marker)),
@@ -45,10 +34,12 @@ impl App {
             Action::Learn if self.grammar => self.editor.learn(),
             Action::MuteCheck if self.grammar => self.ask_to_mute(),
             Action::CycleLint(step) if self.grammar => self.cycle_lint(step),
-            Action::CycleLint(step) => self.step_row(step, false),
+            Action::CycleLint(step) => {
+                self.editor.move_cursor(Motion::Block(step), false);
+            }
             Action::Move(motion, extend) => self.editor.move_cursor(motion, extend),
             Action::Row(step, extend) => self.step_row(step, extend),
-            Action::Page(step) => self.page(step),
+            Action::Page(step, extend) => self.page(step, extend),
             Action::SelectAll => self.editor.select_all(),
             Action::Copy => self.copy(),
             Action::Paste => self.paste(),

@@ -32,7 +32,7 @@ impl Editor {
             Motion::Word(step) => self.active.step_word(step),
             Motion::Line(step) => self.step_line(step, extend),
             Motion::LineEdge(step) => self.active.to_line_edge(step),
-            Motion::Block(step) => self.active.to_block_edge(step),
+            Motion::Block(step) => self.step_block(step, extend),
             Motion::Document(step) => self.go_to_document_edge(step, extend),
         }
         self.record_cursor();
@@ -49,6 +49,22 @@ impl Editor {
             return;
         }
         self.active.step(step);
+    }
+
+    /// Ctrl with an arrow: the edge of the block the cursor stands in, and from an edge
+    /// the far side of the block beyond it, so that every press after the first takes in
+    /// a whole block — the way Ctrl with Left and Right walks from one word's edge to the
+    /// next. The ends of the document are where the walk stops.
+    fn step_block(&mut self, step: Step, extend: bool) {
+        let at_edge = self.active.cursor() == if step > 0 { self.active.length() } else { 0 };
+        if !at_edge {
+            return self.active.to_block_edge(step);
+        }
+        let Some(target) = self.neighbour(step) else {
+            return;
+        };
+        self.go_to(target, extend);
+        self.active.to_block_edge(step);
     }
 
     fn step_line(&mut self, step: Step, extend: bool) {

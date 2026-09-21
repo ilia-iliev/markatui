@@ -114,8 +114,8 @@ struct App {
     viewport: usize,
     /// What the config said that could not be read, until the first key is pressed.
     notice: Vec<String>,
-    /// What the terminal answers about its keyboard, which says whether Shift+Enter
-    /// arrives as a key of its own or as a plain Enter.
+    /// What the terminal answers about its keyboard, which says whether the shifted
+    /// bindings arrive as keys of their own and whether a frame can be sent in one piece.
     keyboard: Keyboard,
     pictures: Vec<PastedPicture>,
     quit: bool,
@@ -550,28 +550,55 @@ mod tests {
         app
     }
 
-    /// Enter ends the block, and Shift+Enter is the line break inside it. A terminal that
-    /// cannot tell the two apart leaves the writer one key for both, so there the older
-    /// rule stands: the first press breaks the line and the second ends the block.
+    /// The first Enter breaks the line inside the block and the second ends it, whatever
+    /// the terminal can tell apart. Shift+Enter is the line break on its own, for the
+    /// blocks where Enter has something else to do.
     #[test]
-    fn ends_the_block_on_enter_and_breaks_the_line_where_the_terminal_can_say_so() {
+    fn breaks_the_line_on_enter_and_ends_the_block_on_the_second_press() {
         let path = document("enter", "one two");
         let mut app = app(&path);
         app.editor.activate(0, 3);
-        app.act(Action::LineBreak);
+        app.act(Action::Enter);
         assert_eq!(app.editor.block(0), "one\n two");
         app.act(Action::Enter);
         assert_eq!(app.editor.blocks().len(), 2);
         assert_eq!(app.editor.block(1), " two");
 
+        // A terminal that cannot tell Shift+Enter from Enter gets the same rule, because
+        // it is the only rule there is now.
         let mut legacy =
             App::open(&path, Gallery::new(Picker::halfblocks(), &path), Keyboard::Legacy);
         legacy.set_mode("plain");
         legacy.editor.activate(0, 3);
         legacy.act(Action::Enter);
-        assert_eq!(legacy.editor.block(0), "one\n two", "the first press broke the block");
+        assert_eq!(legacy.editor.block(0), "one\n two");
         legacy.act(Action::Enter);
         assert_eq!(legacy.editor.blocks().len(), 2);
+
+        let mut shifted =
+            App::open(&path, Gallery::new(Picker::halfblocks(), &path), Keyboard::Kitty);
+        shifted.set_mode("plain");
+        shifted.editor.activate(0, 3);
+        shifted.act(Action::LineBreak);
+        assert_eq!(shifted.editor.block(0), "one\n two");
+        forget(&path);
+    }
+
+    /// Control with the arrows walks the blocks while the checker is off, the way control
+    /// with Left and Right walks the words.
+    #[test]
+    fn walks_the_blocks_on_control_with_the_arrows_while_the_checker_is_off() {
+        let path = document("cycle", "alpha\n\nbeta\n\ngamma");
+        let mut app = app(&path);
+        app.set_mode("grammar-off");
+        app.editor.activate(0, 2);
+
+        app.act(Action::CycleLint(1));
+        assert_eq!((app.editor.index(), app.editor.active().cursor()), (0, 5));
+        app.act(Action::CycleLint(1));
+        assert_eq!((app.editor.index(), app.editor.active().cursor()), (1, 4));
+        app.act(Action::CycleLint(-1));
+        assert_eq!((app.editor.index(), app.editor.active().cursor()), (1, 0));
         forget(&path);
     }
 
@@ -878,15 +905,55 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(90, 9)).expect("a test screen");
         frame(&mut app, &mut terminal);
 
-        app.page(1);
+        app.page(1, false);
         frame(&mut app, &mut terminal);
         assert!(app.scroll > 0, "PageDown left the first screenful in place");
         assert!(app.editor.index() > 0, "PageDown left the cursor in place");
 
-        app.page(-1);
+        app.page(-1, false);
         frame(&mut app, &mut terminal);
         assert_eq!(app.scroll, 0);
         assert_eq!(app.editor.index(), 0);
+        forget(&path);
+    }
+
+    /// Shift with a page key draws a selection over everything the caret travels past,
+    /// the way shift with an arrow does, and a selection already running grows rather
+    /// than being thrown away and started again where the caret happened to stand.
+    #[test]
+    fn shift_with_a_page_key_draws_the_selection_with_it() {
+        let source = (0..20).map(|line| format!("line {line}")).collect::<Vec<_>>().join("\n\n");
+        let path = document("page-selection", &source);
+        let mut app = app(&path);
+        let mut terminal = Terminal::new(TestBackend::new(90, 9)).expect("a test screen");
+        frame(&mut app, &mut terminal);
+
+        // A selection of the first four characters, to be carried along by the page key.
+        app.act(Action::Move(Motion::LineEdge(1), true));
+        assert_eq!(app.editor.selected_text(), "line 0");
+
+        app.act(Action::Page(1, true));
+        frame(&mut app, &mut terminal);
+        let selected = app.editor.selected_text();
+        assert!(selected.starts_with("line 0"), "the selection was started again: {selected:?}");
+        assert!(selected.contains("line 1"), "nothing between the two ends: {selected:?}");
+        assert!(app.editor.index() > 0, "the caret never left the first block");
+
+        // A second press grows the same selection, and a press back up shrinks it to
+        // what is left, rather than either of them starting one afresh.
+        app.act(Action::Page(1, true));
+        frame(&mut app, &mut terminal);
+        let further = app.editor.selected_text();
+        assert!(further.starts_with("line 0"), "the selection was started again: {further:?}");
+        assert!(further.len() > selected.len(), "the second page took in nothing more");
+
+        app.act(Action::Page(-1, true));
+        frame(&mut app, &mut terminal);
+        assert_eq!(app.editor.selected_text(), selected, "paging back did not shrink it");
+
+        // Without shift the page key leaves nothing selected.
+        app.act(Action::Page(1, false));
+        assert_eq!(app.editor.selected_text(), "");
         forget(&path);
     }
 
@@ -903,11 +970,11 @@ mod tests {
         until_the_picture_lands(&mut app, &mut terminal);
         assert_eq!(app.document.caret(), None);
 
-        app.page(1);
+        app.page(1, false);
         frame(&mut app, &mut terminal);
         assert!(app.scroll > 0, "PageDown left the image in place");
 
-        app.page(-1);
+        app.page(-1, false);
         frame(&mut app, &mut terminal);
         assert_eq!(app.scroll, 0, "PageUp left the image scrolled");
         forget(&path);

@@ -32,13 +32,14 @@ pub enum Action {
     Move(Motion, Extend),
     /// Up or down, which crosses wrapped rows and so needs the layout to resolve.
     Row(Step, Extend),
-    Page(Step),
+    /// A screenful at a time, window and caret together.
+    Page(Step, Extend),
     SelectAll,
     Delete(Step),
     Enter,
-    /// Shift+Enter: a line break inside the block, where Enter ends it. Only a terminal
-    /// answering the kitty protocol tells the two apart; on one that does not, the writer
-    /// gets the older rule, where a second Enter is what ends the block.
+    /// Shift+Enter: a line break inside the block, wherever Enter has something else to
+    /// do — a list item, a table row, the end of a heading. In a paragraph Enter leaves
+    /// the same break, and the press after it is what ends the block.
     LineBreak,
     /// Tab, which moves between the two halves of the search bar, and in the document
     /// takes a list item in or out a level, walks a table's cells, or types a tab.
@@ -281,8 +282,8 @@ const COMMANDS: &[Command] = &[
         default: "ctrl+shift+r",
         action: Action::Align(Align::Right),
     },
-    // Control walks the suggestions the checker offered rather than the text; where it
-    // has offered none, the caller lets it move the cursor as it always did.
+    // Control walks the suggestions the checker offered rather than the blocks; where the
+    // checker is off, the caller hands the pair back to the document.
     Command {
         section: "Suggestions",
         name: "previous_suggestion",
@@ -425,6 +426,12 @@ pub fn editing(key: KeyEvent) -> Action {
 
         (KeyCode::Left, true, _) => Action::Move(Motion::Word(-1), shift),
         (KeyCode::Right, true, _) => Action::Move(Motion::Word(1), shift),
+        // Control with Up and Down walks the blocks the way control with Left and Right
+        // walks the words. Unshifted the pair is the checker's while it is on, which is
+        // what the bound command above answers; shifted it is the document's throughout,
+        // so that a selection can be drawn a block at a time either way.
+        (KeyCode::Up, true, _) => Action::Move(Motion::Block(-1), shift),
+        (KeyCode::Down, true, _) => Action::Move(Motion::Block(1), shift),
         (KeyCode::Home, true, _) => Action::Move(Motion::Document(-1), shift),
         (KeyCode::End, true, _) => Action::Move(Motion::Document(1), shift),
         (KeyCode::Left, false, _) => Action::Move(Motion::Character(-1), shift),
@@ -433,8 +440,8 @@ pub fn editing(key: KeyEvent) -> Action {
         (KeyCode::End, false, _) => Action::Move(Motion::LineEdge(1), shift),
         (KeyCode::Up, false, _) => Action::Row(-1, shift),
         (KeyCode::Down, false, _) => Action::Row(1, shift),
-        (KeyCode::PageUp, _, _) => Action::Page(-1),
-        (KeyCode::PageDown, _, _) => Action::Page(1),
+        (KeyCode::PageUp, _, _) => Action::Page(-1, shift),
+        (KeyCode::PageDown, _, _) => Action::Page(1, shift),
 
         (KeyCode::Backspace, false, _) => Action::Delete(-1),
         (KeyCode::Delete, false, _) => Action::Delete(1),
@@ -613,6 +620,17 @@ mod tests {
         assert_eq!(editing(press(KeyCode::Enter, KeyModifiers::SHIFT)), Action::LineBreak);
         assert_eq!(editing(press(KeyCode::Tab, KeyModifiers::NONE)), Action::Tab(1));
         assert_eq!(editing(press(KeyCode::BackTab, KeyModifiers::SHIFT)), Action::Tab(-1));
+    }
+
+    /// Control with Up and Down walks the blocks the way control with Left and Right
+    /// walks the words. The checker takes the unshifted pair while it is on, and hands
+    /// them back to the document when it is not; shift is the document's either way.
+    #[test]
+    fn walks_the_blocks_on_control_with_the_up_and_down_arrows() {
+        let both = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
+        assert_eq!(editing(press(KeyCode::Up, both)), Action::Move(Motion::Block(-1), true));
+        assert_eq!(editing(press(KeyCode::Down, both)), Action::Move(Motion::Block(1), true));
+        assert_eq!(control(KeyCode::Left), Action::Move(Motion::Word(-1), false));
     }
 
     #[test]

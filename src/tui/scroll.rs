@@ -32,7 +32,7 @@ impl App {
     /// Page through the document a screenful at a time. The window and caret travel
     /// together, so the next screenful replaces this one rather than merely bringing its
     /// first block into view.
-    pub(super) fn page(&mut self, step: Step) {
+    pub(super) fn page(&mut self, step: Step, extend: bool) {
         // Rendered images and tables deliberately have no caret mapping. Their first row
         // still anchors a page movement, so reading mode can page away from them.
         let (row, column) =
@@ -54,7 +54,10 @@ impl App {
         let distance = step as isize * self.viewport as isize;
         let last_page = height.saturating_sub(self.viewport);
         self.scroll = self.scroll.saturating_add_signed(distance).min(last_page);
-        self.editor.activate(index, at);
+        match extend {
+            true => self.editor.extend_to(index, at),
+            false => self.editor.activate(index, at),
+        }
     }
 
     /// The first row of `range` with text on it, scanned from the end a movement of

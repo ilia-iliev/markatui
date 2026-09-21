@@ -164,16 +164,30 @@ impl Editor {
         }
     }
 
-    /// Enter: the block ends here and the next one opens under it, which is what Enter
-    /// means in every editor a writer arrives from. A line break inside the block is
-    /// Shift+Enter — [`Editor::line_break`].
+    /// Enter: a line break inside the paragraph, and a second press where the first left
+    /// the cursor ends the block. A writer means the break far more often than the break
+    /// in the document, and the press that ends the block is the one they have already
+    /// made in every editor that asks for an empty line to end a list.
     ///
-    /// What goes on by the line ends differently. A list opens the next item, a quote the
-    /// next quoted line, a table the next row, and a line left empty in any of them says
-    /// that run is over. A fence has nothing Enter can end: a blank line in code is a
-    /// blank line of code, so the block only ends where the cursor has come to rest past
-    /// the fence that closes it.
+    /// What goes on by the line ends on the first press, because a break inside it is not
+    /// a thing markdown has: a list opens the next item, a quote the next quoted line, a
+    /// table the next row, a heading gives way to the paragraph under it, and a line left
+    /// empty in any of them says that run is over. A fence has nothing Enter can end: a
+    /// blank line in code is a blank line of code, so the block only ends where the cursor
+    /// has come to rest past the fence that closes it.
     pub fn enter(&mut self) {
+        if self.kind() == parse::Kind::Paragraph
+            && self.active.item().is_none()
+            && !self.active.ends_block()
+        {
+            return self.line_break();
+        }
+        self.end_block();
+    }
+
+    /// The half of Enter that ends the block: the second press in a paragraph, and the
+    /// first everywhere the line break has no meaning of its own.
+    fn end_block(&mut self) {
         if self.take_spanning_selection("") {
             return;
         }
@@ -200,21 +214,6 @@ impl Editor {
             None => {}
         }
         self.split_block();
-    }
-
-    /// Enter on a terminal that cannot tell Shift+Enter from Enter: the first press
-    /// leaves a line break in the paragraph and the second ends it, which is the only way
-    /// to have both where there is one key for them. Everything that goes on by the
-    /// line — a list, a quote, a table, a fence — ends the way it does anywhere else.
-    pub fn enter_or_break(&mut self) {
-        if self.kind() == parse::Kind::Paragraph
-            && self.active.item().is_none()
-            && !self.active.ends_block()
-        {
-            self.line_break();
-            return;
-        }
-        self.enter();
     }
 
     /// Shift+Enter: a line break inside the block, which markdown reads as one line of a
@@ -441,10 +440,17 @@ mod tests {
         assert_eq!(editor.source(), "one\n\nXtwo");
     }
 
+    /// The first Enter breaks the line inside the paragraph and the second ends the
+    /// block, so that a writer who means a line break never has to reach for a second
+    /// key to get one.
     #[test]
-    fn breaks_a_block_in_two_on_enter() {
+    fn breaks_the_line_first_and_the_block_second_on_enter() {
         let mut editor = document("one two");
         editor.activate(0, 3);
+        editor.enter();
+        assert_eq!(texts(&editor), ["one\n two"]);
+        assert_eq!(editor.index(), 0);
+
         editor.enter();
         assert_eq!(texts(&editor), ["one", " two"]);
         assert_eq!(editor.index(), 1);
@@ -460,23 +466,6 @@ mod tests {
         editor.line_break();
         assert_eq!(texts(&editor), ["one\n two"]);
         assert_eq!(editor.index(), 0);
-    }
-
-    /// A terminal that cannot tell the two apart keeps the older rule, which is the only
-    /// way a writer on one can have both.
-    #[test]
-    fn breaks_the_line_first_and_the_block_second_without_shift_enter() {
-        let mut editor = document("one two");
-        editor.activate(0, 3);
-        editor.enter_or_break();
-        assert_eq!(texts(&editor), ["one\n two"]);
-        editor.enter_or_break();
-        assert_eq!(texts(&editor), ["one", " two"]);
-        // What goes on by the line ends on the first press there as it does anywhere.
-        let mut editor = document("# Title");
-        editor.activate(0, 7);
-        editor.enter_or_break();
-        assert_eq!(texts(&editor), ["# Title", ""]);
     }
 
     /// A blank line in code is a blank line of code: the fence is what closes a code
@@ -609,9 +598,11 @@ mod tests {
     fn reads_back_the_blank_paragraphs_it_wrote() {
         let mut editor = document("one");
         editor.activate(0, 3);
-        // Once to end the block, once again for the paragraph left blank between them.
-        editor.enter();
-        editor.enter();
+        // Twice to end the block — the break and the press that ends it — and twice
+        // again for the paragraph left blank between them.
+        for _ in 0..4 {
+            editor.enter();
+        }
         editor.insert("two");
         let source = editor.source();
         assert_eq!(texts(&editor), ["one", "", "two"]);
@@ -903,6 +894,7 @@ mod tests {
         editor.activate(0, 3);
         editor.insert(" ![a](1.png)");
         editor.enter();
+        editor.enter();
         assert_eq!(texts(&editor), ["one", "![a](1.png)", " two"]);
         assert_eq!(editor.index(), 2);
         assert!(editor.hoisted);
@@ -928,6 +920,56 @@ mod tests {
 
         editor.move_cursor(Motion::Character(-1), false);
         assert_eq!((editor.index(), editor.active().cursor()), (0, 5));
+    }
+
+    /// Ctrl with the arrows walks the blocks the way Ctrl with Left and Right walks the
+    /// words: one press to the edge of the block the cursor stands in, and every press
+    /// after it a whole block along.
+    #[test]
+    fn cycles_forward_through_the_blocks() {
+        let mut editor = document("alpha\n\nbeta\n\ngamma");
+        editor.activate(0, 2);
+        editor.move_cursor(Motion::Block(1), false);
+        assert_eq!((editor.index(), editor.active().cursor()), (0, 5));
+
+        editor.move_cursor(Motion::Block(1), false);
+        assert_eq!((editor.index(), editor.active().cursor()), (1, 4));
+
+        editor.move_cursor(Motion::Block(1), false);
+        assert_eq!((editor.index(), editor.active().cursor()), (2, 5));
+
+        // The end of the document is where the walk stops.
+        editor.move_cursor(Motion::Block(1), false);
+        assert_eq!((editor.index(), editor.active().cursor()), (2, 5));
+    }
+
+    #[test]
+    fn cycles_back_through_the_blocks() {
+        let mut editor = document("alpha\n\nbeta\n\ngamma");
+        editor.activate(2, 3);
+        editor.move_cursor(Motion::Block(-1), false);
+        assert_eq!((editor.index(), editor.active().cursor()), (2, 0));
+
+        editor.move_cursor(Motion::Block(-1), false);
+        assert_eq!((editor.index(), editor.active().cursor()), (1, 0));
+
+        editor.move_cursor(Motion::Block(-1), false);
+        assert_eq!((editor.index(), editor.active().cursor()), (0, 0));
+
+        editor.move_cursor(Motion::Block(-1), false);
+        assert_eq!((editor.index(), editor.active().cursor()), (0, 0));
+    }
+
+    /// A block a press walks past is a block the selection takes in whole, gaps and all.
+    #[test]
+    fn takes_a_whole_block_in_as_it_cycles_past_it() {
+        let mut editor = document("alpha\n\nbeta\n\ngamma");
+        editor.activate(0, 5);
+        editor.move_cursor(Motion::Block(1), true);
+        assert_eq!(editor.selected_text(), "\n\nbeta");
+
+        editor.move_cursor(Motion::Block(1), true);
+        assert_eq!(editor.selected_text(), "\n\nbeta\n\ngamma");
     }
 
     /// The ends of the document have no block to go on to, so the cursor stays where the

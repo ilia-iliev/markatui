@@ -25,6 +25,9 @@ const BULLET: &str = "•";
 const QUOTE_BAR: &str = "▎";
 /// What stands where a picture will go once there is one to draw.
 const IMAGE: &str = "▣";
+/// How many columns a tab is drawn as. Markdown reads one the same way: CommonMark
+/// counts a tab as a tab stop four columns wide.
+const TAB_WIDTH: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cell {
@@ -207,7 +210,7 @@ fn decoration(prefix: &Prefix, line: &Line, revealed: bool) -> (Vec<Cell>, Vec<C
         // A number is how the line reads, not punctuation: it stays as it was written.
         Marker::Numbered(number) => {
             lead.extend(number.graphemes(true).map(|part| glyph(part, style::MARKER)));
-            lead.push(glyph(" ", 0));
+            lead.extend(padding(numbered_width(number) - number.width() as u16));
         }
         Marker::Fence => lead.extend(fence_border(line)),
         Marker::Whole => lead.extend(rule()),
@@ -222,9 +225,17 @@ fn decoration(prefix: &Prefix, line: &Line, revealed: bool) -> (Vec<Cell>, Vec<C
 fn marker_width(marker: &Marker) -> u16 {
     match marker {
         Marker::Bullet => 2,
-        Marker::Numbered(number) => number.width() as u16 + 1,
+        Marker::Numbered(number) => numbered_width(number),
         _ => 0,
     }
+}
+
+/// The columns a number stands in. The space after `1.` is the column `10.` writes its
+/// second digit in, so a list keeps its words in one column all the way to 99 instead of
+/// stepping right halfway down. A hundredth item does step the words along, a list that
+/// long being rare enough to be worth the column.
+fn numbered_width(number: &str) -> u16 {
+    (number.width() as u16).max(3)
 }
 
 /// A fence drawn rather than shown: a line of rule with the language written into it, so
@@ -280,20 +291,29 @@ fn source_cells(
     let mut at = line.at + range.start;
     taken
         .graphemes(true)
-        .map(|part| {
+        .flat_map(|part| {
             let source = at;
             at += part.chars().count();
             let washed = lints.iter().any(|span| span.contains(&source));
-            Cell {
-                text: part.to_string(),
-                width: part.width().max(1) as u16,
-                bits: mask.get(source).copied().unwrap_or(0)
-                    | extra
-                    | if washed { style::LINT } else { 0 },
-                source: Some(source),
-            }
+            let bits = mask.get(source).copied().unwrap_or(0)
+                | extra
+                | if washed { style::LINT } else { 0 };
+            cells_for(part, bits, source)
         })
         .collect()
+}
+
+/// The cells one grapheme of the source is drawn as: one, and four for a tab. A tab left
+/// as the single character it is would go to the terminal as a tab, which jumps to a stop
+/// of the terminal's own choosing and leaves everything after it on the row painted a
+/// column out of place. Every space of it is still the tab's own character, so the caret,
+/// a click and a selection all land on the tab wherever in the run they fall.
+fn cells_for(part: &str, bits: u16, source: usize) -> Vec<Cell> {
+    let source = Some(source);
+    if part == "\t" {
+        return vec![Cell { text: " ".into(), width: 1, bits, source }; TAB_WIDTH];
+    }
+    vec![Cell { text: part.to_string(), width: part.width().max(1) as u16, bits, source }]
 }
 
 /// A lone image: rows left empty for the terminal to draw the picture into, where there
@@ -390,6 +410,14 @@ mod tests {
     }
 
     #[test]
+    fn holds_the_column_when_a_list_reaches_two_digits() {
+        assert_eq!(drawn(&laid_out("9. one\n10. two", None, 40)), ["9. one", "10.two"]);
+        assert_eq!(drawn(&laid_out("99. one\n100. two", None, 40)), ["99.one", "100.two"]);
+        // And the second row of an item still hangs under the first.
+        assert_eq!(drawn(&laid_out("10. one two three", None, 11)), ["10.one two", "   three"]);
+    }
+
+    #[test]
     fn puts_a_bar_in_the_gutter_of_a_quote() {
         assert_eq!(drawn(&laid_out("> one\n> two", None, 40)), ["▎ one", "▎ two"]);
     }
@@ -417,6 +445,19 @@ mod tests {
             drawn(&laid_out("- one two three four", None, 10)),
             ["• one two", "  three", "  four"]
         );
+    }
+
+    /// A tab is drawn as the columns it stands for. Left as the one character it is, the
+    /// terminal takes it as a jump to its own tab stop and paints the rest of the row a
+    /// column out of place.
+    #[test]
+    fn draws_a_tab_as_the_columns_it_stands_for() {
+        let layout = laid_out("a\tb", None, 40);
+        assert_eq!(drawn(&layout), ["a    b"]);
+        assert!(layout.rows[0].cells.iter().all(|cell| cell.text != "\t"));
+        // The caret stands at the near edge of the tab, and past it four columns along.
+        assert_eq!(drawn(&laid_out("a\tb", Some(1), 40)), ["a|    b"]);
+        assert_eq!(drawn(&laid_out("a\tb", Some(2), 40)), ["a    |b"]);
     }
 
     #[test]
