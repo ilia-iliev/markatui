@@ -5,7 +5,7 @@
 //! ends a block while the writer is in the document and closes the search while they are
 //! in it — and the split is along the modes rather than along the keys.
 
-use crate::editor::{Editor, Field, Motion};
+use crate::editor::{Editor, Field};
 use crate::tui::keys::Action;
 use crate::tui::{App, Mode};
 
@@ -34,10 +34,7 @@ impl App {
             Action::AcceptLint if self.grammar => self.edit(Editor::accept_lint),
             Action::Learn if self.grammar => self.editor.learn(),
             Action::MuteCheck if self.grammar => self.ask_to_mute(),
-            Action::CycleLint(step) if self.grammar => self.cycle_lint(step),
-            Action::CycleLint(step) => {
-                self.editor.move_cursor(Motion::Block(step), false);
-            }
+            Action::CycleLint(step) => self.cycle_lint(step),
             Action::Move(motion, extend) => self.editor.move_cursor(motion, extend),
             Action::Row(step, extend) => self.step_row(step, extend),
             Action::Page(step, extend) => self.page(step, extend),

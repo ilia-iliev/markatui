@@ -17,7 +17,7 @@ pub mod theme;
 pub mod view;
 
 use crate::active::Step;
-use crate::editor::Editor;
+use crate::editor::{Editor, Motion};
 use crate::link;
 use crate::lint;
 use crate::storage;
@@ -329,11 +329,12 @@ impl App {
         self.typed_at = Some(Instant::now());
     }
 
-    /// Control with the up and down keys walks the checker's suggestions. Where it has
-    /// offered none there is nothing to walk, and the keys move the cursor as they always did.
+    /// Control with the up and down keys walks the checker's suggestions. Where the
+    /// checker is off, or has offered none, there is nothing to walk and the keys walk
+    /// the blocks, the way control with Left and Right walks the words.
     fn cycle_lint(&mut self, step: Step) {
-        if self.editor.lint.replacements.is_empty() {
-            self.step_row(step, false);
+        if !self.grammar || self.editor.lint.replacements.is_empty() {
+            self.editor.move_cursor(Motion::Block(step), false);
             return;
         }
         self.editor.cycle_lint(step);
@@ -500,7 +501,6 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::Motion;
     use ratatui::backend::TestBackend;
     use ratatui::{TerminalOptions, Viewport};
     use ratatui_image::picker::Picker;
@@ -599,6 +599,23 @@ mod tests {
         assert_eq!((app.editor.index(), app.editor.active().cursor()), (1, 4));
         app.act(Action::CycleLint(-1));
         assert_eq!((app.editor.index(), app.editor.active().cursor()), (1, 0));
+        forget(&path);
+    }
+
+    /// The checker being on does not turn the arrows into line keys: with no suggestion
+    /// to walk, control with them walks the blocks, the same as when the checker is off.
+    #[test]
+    fn walks_the_blocks_on_control_with_the_arrows_while_the_checker_is_on() {
+        let path = document("cycle-on", "alpha\nbeta\n\ngamma");
+        let mut app = app(&path);
+        app.grammar = true;
+        app.editor.lint.replacements.clear();
+        app.editor.activate(0, 2);
+
+        app.act(Action::CycleLint(1));
+        assert_eq!((app.editor.index(), app.editor.active().cursor()), (0, 10));
+        app.act(Action::CycleLint(1));
+        assert_eq!((app.editor.index(), app.editor.active().cursor()), (1, 5));
         forget(&path);
     }
 
