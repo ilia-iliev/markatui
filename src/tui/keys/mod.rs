@@ -36,6 +36,8 @@ pub enum Action {
     Page(Step, Extend),
     SelectAll,
     Delete(Step),
+    /// Ctrl with Backspace and Delete: the same, as far as Ctrl with the arrows walks.
+    DeleteWord(Step),
     Enter,
     /// Shift+Enter: a line break inside the block, wherever Enter has something else to
     /// do — a list item, a table row, the end of a heading. In a paragraph Enter leaves
@@ -443,6 +445,8 @@ pub fn editing(key: KeyEvent) -> Action {
         (KeyCode::PageUp, _, _) => Action::Page(-1, shift),
         (KeyCode::PageDown, _, _) => Action::Page(1, shift),
 
+        (KeyCode::Backspace, true, _) => Action::DeleteWord(-1),
+        (KeyCode::Delete, true, _) => Action::DeleteWord(1),
         (KeyCode::Backspace, false, _) => Action::Delete(-1),
         (KeyCode::Delete, false, _) => Action::Delete(1),
         (KeyCode::Enter, false, true) => Action::LineBreak,
@@ -631,6 +635,16 @@ mod tests {
         assert_eq!(editing(press(KeyCode::Up, both)), Action::Move(Motion::Block(-1), true));
         assert_eq!(editing(press(KeyCode::Down, both)), Action::Move(Motion::Block(1), true));
         assert_eq!(control(KeyCode::Left), Action::Move(Motion::Word(-1), false));
+    }
+
+    /// Ctrl with Backspace and Delete takes out a word, the way Ctrl with Left and
+    /// Right walks one.
+    #[test]
+    fn deletes_a_word_on_control_with_the_delete_keys() {
+        assert_eq!(control(KeyCode::Backspace), Action::DeleteWord(-1));
+        assert_eq!(control(KeyCode::Delete), Action::DeleteWord(1));
+        assert_eq!(plain(KeyCode::Backspace), Action::Delete(-1));
+        assert_eq!(plain(KeyCode::Delete), Action::Delete(1));
     }
 
     #[test]

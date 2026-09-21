@@ -149,6 +149,13 @@ impl Active {
 
     /// Step a word at a time: over the run of spaces, then over the word beyond it.
     pub fn step_word(&mut self, step: Step) {
+        self.cursor = self.word_edge(step);
+        self.goal = None;
+    }
+
+    /// Where a word-wise step lands: past the run of spaces on that side of the cursor,
+    /// then past the word beyond it. The cursor itself where there is neither.
+    fn word_edge(&self, step: Step) -> usize {
         let characters: Vec<char> = self.text.chars().collect();
         let mut at = self.cursor;
         let peek = |at: usize| -> Option<char> {
@@ -161,8 +168,7 @@ impl Active {
         while peek(at).is_some_and(char::is_alphanumeric) {
             at = self.neighbour(at, step);
         }
-        self.cursor = at;
-        self.goal = None;
+        at
     }
 
     /// Move to the start or end of the line, barring the whitespace at that edge: Home
@@ -269,14 +275,21 @@ impl Active {
     /// there is one. `false` where there is nothing to take out on that side, which the
     /// document reads as a merge or a nothing.
     pub fn delete(&mut self, step: Step) -> bool {
+        self.take_to(self.neighbour(self.cursor, step))
+    }
+
+    /// The same, a word at a time: Ctrl with Backspace and Delete, which reach as far as
+    /// Ctrl with the arrows walks.
+    pub fn delete_word(&mut self, step: Step) -> bool {
+        self.take_to(self.word_edge(step))
+    }
+
+    /// Take out what lies between the cursor and `edge` — or the selection where there
+    /// is one, because that is what the writer pointed at and it goes whole whatever the
+    /// key would otherwise have reached.
+    fn take_to(&mut self, edge: usize) -> bool {
         let selection = self.selection();
-        let (start, end) = selection.unwrap_or_else(|| {
-            if step > 0 {
-                (self.cursor, self.neighbour(self.cursor, 1))
-            } else {
-                (self.neighbour(self.cursor, -1), self.cursor)
-            }
-        });
+        let (start, end) = selection.unwrap_or((self.cursor.min(edge), self.cursor.max(edge)));
         if start == end {
             return false;
         }
@@ -386,6 +399,33 @@ mod tests {
         let mut active = at("**b** c", 5);
         assert!(active.delete(-1));
         assert_eq!(shown(&active), "**b*| c");
+    }
+
+    /// Ctrl with Backspace takes out the word behind the cursor, and Ctrl with Delete
+    /// the one in front, which is the pair of steps Ctrl with the arrows walks.
+    #[test]
+    fn deletes_a_word_either_side_of_the_cursor() {
+        let mut active = at("one two three", 7);
+        assert!(active.delete_word(-1));
+        assert_eq!(shown(&active), "one | three");
+        assert!(active.delete_word(1));
+        assert_eq!(shown(&active), "one |");
+    }
+
+    /// A selection is what the writer pointed at, so the word keys take that and no
+    /// more, the same as the plain ones.
+    #[test]
+    fn deletes_the_selection_rather_than_a_word_where_there_is_one() {
+        let mut active = at("one two three", 0);
+        active.select(0, 5);
+        assert!(active.delete_word(1));
+        assert_eq!(shown(&active), "|wo three");
+    }
+
+    #[test]
+    fn has_no_word_to_delete_at_the_ends_of_the_block() {
+        assert!(!at("one two", 0).delete_word(-1));
+        assert!(!at("one two", 7).delete_word(1));
     }
 
     #[test]

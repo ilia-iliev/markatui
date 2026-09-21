@@ -146,11 +146,22 @@ impl Editor {
     /// one. At the start of a block with nothing selected, the block merges into the one
     /// before it.
     pub fn delete(&mut self, step: Step) {
+        self.take(step, Active::delete);
+    }
+
+    /// The same, a word at a time: Ctrl with Backspace and Delete. A block whose edge
+    /// the cursor is standing on has no word left to give, so it merges as it does under
+    /// the plain keys.
+    pub fn delete_word(&mut self, step: Step) {
+        self.take(step, Active::delete_word);
+    }
+
+    fn take(&mut self, step: Step, from_block: impl Fn(&mut Active, Step) -> bool) {
         if self.take_spanning_selection("") {
             return;
         }
         let selection = self.active.selection().is_some();
-        if self.active.delete(step) {
+        if from_block(&mut self.active, step) {
             if selection {
                 self.record_edit();
             } else {
@@ -550,6 +561,22 @@ mod tests {
         assert_eq!(texts(&editor), ["words\t"]);
         editor.tab(-1);
         assert_eq!(texts(&editor), ["words\t"]);
+    }
+
+    /// Ctrl with Backspace and Delete takes out a whole word, and at the edge of the
+    /// block it joins the neighbour the plain keys join.
+    #[test]
+    fn deletes_a_word_at_a_time_on_control_with_the_delete_keys() {
+        let mut editor = document("one two three\n\nfour");
+        editor.activate(0, 13);
+        editor.delete_word(-1);
+        assert_eq!(texts(&editor), ["one two ", "four"]);
+        editor.delete_word(-1);
+        assert_eq!(texts(&editor), ["one ", "four"]);
+        // At the start of a block there is no word left to take, so the blocks join.
+        editor.activate(1, 0);
+        editor.delete_word(-1);
+        assert_eq!(texts(&editor), ["one four"]);
     }
 
     /// Delete at the end of a block pulls the next one up, which is the mirror of

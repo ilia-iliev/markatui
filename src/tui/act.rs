@@ -14,6 +14,7 @@ impl App {
         match action {
             Action::Type(text) => self.edit(|editor| editor.insert(&text)),
             Action::Delete(step) => self.edit(|editor| editor.delete(step)),
+            Action::DeleteWord(step) => self.edit(|editor| editor.delete_word(step)),
             Action::Enter => self.edit(Editor::enter),
             Action::LineBreak => self.edit(Editor::line_break),
             Action::Tab(step) => self.edit(|editor| editor.tab(step)),
