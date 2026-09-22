@@ -3,7 +3,7 @@
 //! title bar, and the kitty keyboard flags where the terminal answers for them.
 
 use crate::tui::config;
-use crate::tui::probe::{Capabilities, Keyboard};
+use crate::tui::probe::Keyboard;
 use crossterm::cursor;
 use crossterm::event::{
     self, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -33,7 +33,7 @@ const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
 /// puts every one of them back: flags left pushed after a crash leave the writer's shell
 /// with odd keys.
 pub(super) fn start(
-    capabilities: Capabilities,
+    keyboard: Keyboard,
     background: Option<Color>,
     name: &str,
 ) -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
@@ -43,7 +43,7 @@ pub(super) fn start(
         io::stdout().write_all(MOUSE_ON.as_bytes())?;
         io::stdout().flush()?;
     }
-    if capabilities.keyboard == Keyboard::Kitty {
+    if keyboard == Keyboard::Kitty {
         execute!(
             io::stdout(),
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
@@ -51,7 +51,7 @@ pub(super) fn start(
     }
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
-        let _ = stop(capabilities, background);
+        let _ = stop(keyboard, background);
         previous(panic);
     }));
     if let Some(command) = background_commands(background).0 {
@@ -61,8 +61,8 @@ pub(super) fn start(
     Terminal::new(CrosstermBackend::new(io::stdout()))
 }
 
-pub(super) fn stop(capabilities: Capabilities, background: Option<Color>) -> io::Result<()> {
-    if capabilities.keyboard == Keyboard::Kitty {
+pub(super) fn stop(keyboard: Keyboard, background: Option<Color>) -> io::Result<()> {
+    if keyboard == Keyboard::Kitty {
         execute!(io::stdout(), PopKeyboardEnhancementFlags)?;
     }
     if let Some(command) = background_commands(background).1 {

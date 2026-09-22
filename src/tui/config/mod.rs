@@ -360,7 +360,7 @@ mod tests {
         let colour = |channel| Color::Rgb(channel, channel, channel);
         let cell = |bits| Cell { text: "x".to_string(), width: 1, bits, source: Some(0) };
 
-        assert_eq!(theme::content_width_for(&config), 100);
+        assert_eq!(config.content_width, 100);
         assert_eq!(
             view::column_for(Rect::new(10, 0, 200, 1), config.content_width),
             Rect::new(60, 0, 100, 1)

@@ -38,17 +38,11 @@ pub enum Keyboard {
     Legacy,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Capabilities {
-    pub keyboard: Keyboard,
-}
-
-pub fn ask() -> Capabilities {
-    let keyboard = match terminal::supports_keyboard_enhancement() {
+pub fn ask() -> Keyboard {
+    match terminal::supports_keyboard_enhancement() {
         Ok(true) => Keyboard::Kitty,
         _ => Keyboard::Legacy,
-    };
-    Capabilities { keyboard }
+    }
 }
 
 /// Whether frames can be hidden from view until they are complete. There is no portable

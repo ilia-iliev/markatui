@@ -36,20 +36,15 @@ pub fn show() -> Result<String, String> {
 }
 
 /// Turn a check on or off for good. The line goes into the writer's own config, where
-/// they can change it again by hand; nothing else in the file is touched.
+/// they can change it again by hand; nothing else in the file is touched. A line that
+/// already spoke for this check is the one rewritten — putting a second one in would
+/// leave the file saying both things — and otherwise the setting goes under `[checks]`,
+/// opening the table if there is none.
 pub fn set(name: &str, on: bool) -> Result<(), String> {
     if !lint::has_rule(name) {
         return Err(format!("there is no check called {name:?}"));
     }
-    config::rewrite(|text| spoken_for(text, name, on))
-}
-
-/// `text` with `name` turned on or off in it. A line that already spoke for this check is
-/// the one rewritten — putting a second one in would leave the file saying both
-/// things — and otherwise the setting goes under `[checks]`, opening the table if there
-/// is none.
-fn spoken_for(text: &str, name: &str, on: bool) -> String {
-    config::setting_in(text, Some(TABLE), name, &on.to_string(), &[])
+    config::rewrite(|text| config::setting_in(text, Some(TABLE), name, &on.to_string(), &[]))
 }
 
 #[cfg(test)]
@@ -59,7 +54,7 @@ mod tests {
     /// Turning a check off is what this is nearly always for; the tests read better for
     /// saying so once.
     fn muted(text: &str, name: &str) -> String {
-        spoken_for(text, name, false)
+        config::setting_in(text, Some(TABLE), name, "false", &[])
     }
 
     #[test]
@@ -98,7 +93,13 @@ mod tests {
     #[test]
     fn puts_a_check_back_on_where_it_was_turned_off() {
         assert_eq!(
-            spoken_for("[checks]\nUseTitleCase = false\n", "UseTitleCase", true),
+            config::setting_in(
+                "[checks]\nUseTitleCase = false\n",
+                Some(TABLE),
+                "UseTitleCase",
+                "true",
+                &[]
+            ),
             "[checks]\nUseTitleCase = true\n"
         );
     }

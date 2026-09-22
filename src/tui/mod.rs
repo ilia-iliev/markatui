@@ -127,19 +127,19 @@ pub fn run(path: &Path) -> io::Result<()> {
     // Before the terminal, so that reading the dictionaries happens alongside bringing
     // it up rather than after.
     lint::preload(&config::get().checks);
-    let capabilities = probe::ask();
+    let keyboard = probe::ask();
     let background = theme::terminal_background();
-    let mut terminal = terminal::start(capabilities, background, &name(path))?;
+    let mut terminal = terminal::start(keyboard, background, &name(path))?;
     // The picker is asked for once the screen is ours: the terminal answers the question
     // by writing to it, and this way it is our screen that gets written on.
-    let mut app = App::open(path, Gallery::new(probe::pictures(), path), capabilities.keyboard);
+    let mut app = App::open(path, Gallery::new(probe::pictures(), path), keyboard);
     // Whatever the config could not read goes first: it is the older news of the two, and
     // the writer will want to hear it before anything the document did on the way in.
     app.notice.splice(..0, notice);
 
     let result = app.loop_until_quit(&mut terminal);
     app.discard_pictures();
-    terminal::stop(capabilities, background)?;
+    terminal::stop(keyboard, background)?;
     result
 }
 

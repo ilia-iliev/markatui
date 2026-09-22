@@ -160,11 +160,7 @@ impl Footer {
 /// How wide the column of text is, in cells. Wider than this and a line of prose is
 /// tiring to read back; the Qt front end held the same measure in pixels.
 pub fn content_width() -> u16 {
-    content_width_for(config::get())
-}
-
-pub(crate) fn content_width_for(config: &config::Config) -> u16 {
-    config.content_width
+    config::get().content_width
 }
 
 /// What the screen is painted on where nothing else has claimed it: the terminal's own
