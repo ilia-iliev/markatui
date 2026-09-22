@@ -204,11 +204,36 @@ pub fn ground(row: u16) -> Style {
     bits_for(config::get(), row)
 }
 
+/// How far each level below the first carries a heading along the line from the accent
+/// to the muted grey, in hundredths of it. The five steps run well past the grey: the
+/// deepest headings come out on the cool side of it, which is what keeps one level
+/// clearly apart from the next — the accent and the grey by themselves sit too close
+/// together to be cut into six.
+const FADE: i32 = 28;
+
+/// A heading's colour: the accent at the top level, and a step further down the line at
+/// every level under it, so that the hashes count down in colour as they do in size. The
+/// line holds its lightness from end to end, so the deepest heading is as legible on the
+/// page as the first.
+fn heading(palette: &Palette, depth: usize) -> Color {
+    let (Color::Rgb(red, green, blue), Color::Rgb(to_red, to_green, to_blue)) =
+        (palette.accent, palette.muted)
+    else {
+        return palette.accent;
+    };
+    let part = FADE * depth.saturating_sub(1).min(5) as i32;
+    let channel = |from: u8, to: u8| {
+        let from = i32::from(from);
+        (from + (i32::from(to) - from) * part / 100).clamp(0, 255) as u8
+    };
+    Color::Rgb(channel(red, to_red), channel(green, to_green), channel(blue, to_blue))
+}
+
 fn bits_for(config: &config::Config, bits: u16) -> Style {
     let palette = config.palette;
     let mut style = base_for(config);
     if bits & style::HEADING != 0 {
-        style = style.fg(palette.accent).add_modifier(Modifier::BOLD);
+        style = style.fg(heading(&palette, style::depth(bits))).add_modifier(Modifier::BOLD);
     }
     if bits & style::MARKER != 0 {
         style = style.fg(palette.muted);
@@ -255,5 +280,48 @@ pub(crate) fn prompt_for(config: &config::Config) -> Style {
         // out wrong: it is the terminal's own two colours where those are what is showing.
         Footer::Invert => base_for(config).add_modifier(Modifier::REVERSED),
         Footer::Paper => base_for(config),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// How far apart two colours are, summed over the channels.
+    fn gap(one: Color, other: Color) -> u32 {
+        let (Color::Rgb(red, green, blue), Color::Rgb(to_red, to_green, to_blue)) = (one, other)
+        else {
+            return 0;
+        };
+        u32::from(red.abs_diff(to_red))
+            + u32::from(green.abs_diff(to_green))
+            + u32::from(blue.abs_diff(to_blue))
+    }
+
+    /// Every level is a step further from the top heading's colour than the one above it,
+    /// by a margin wide enough to see, and none of them lands on the marker's grey.
+    #[test]
+    fn fades_a_heading_one_visible_step_at_each_level() {
+        for theme in [Theme::Light, Theme::Dark, Theme::Terminal] {
+            let (_, palette) = theme.settings();
+            let colours: Vec<Color> = (1..=6).map(|level| heading(&palette, level)).collect();
+            assert_eq!(colours[0], palette.accent);
+            assert!(colours.iter().all(|colour| *colour != palette.muted));
+            let steps: Vec<u32> = colours.windows(2).map(|pair| gap(pair[0], pair[1])).collect();
+            assert!(steps.iter().all(|step| *step >= 30), "{steps:?}");
+        }
+    }
+
+    /// The level reaches the colour off the cell's own bits, so a `###` line is drawn
+    /// fainter than a `#` one without anything else being asked.
+    #[test]
+    fn draws_a_deeper_heading_in_the_fainter_colour() {
+        let config = config::Config::default();
+        let of = |level| {
+            bits_for(&config, style::HEADING | style::depth_bits(level)).fg.expect("a colour")
+        };
+        assert_eq!(of(1), config.palette.accent);
+        assert_ne!(of(3), of(1));
+        assert_ne!(of(6), of(3));
     }
 }

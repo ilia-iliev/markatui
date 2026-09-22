@@ -22,6 +22,10 @@ pub const MARKER: u16 = 32;
 pub const HIDDEN: u16 = 64;
 /// A heading's words, whatever else they are.
 pub const HEADING: u16 = 128;
+/// How deep that heading is, one to six, carried alongside [`HEADING`] so the colour can
+/// count the hashes without reading the line again. Zero where the bits are not one's.
+pub const DEPTH: u16 = 7 << DEPTH_AT;
+const DEPTH_AT: u16 = 9;
 /// Words inside `<u></u>`, which is the only underline markdown has.
 pub const UNDERLINE: u16 = 256;
 /// Not prose — code, a link, an address. The checker's marks keep off it.
@@ -163,6 +167,17 @@ fn mark_delimiters(frame: &Frame, cursor: Option<usize>, bytes: &mut [u16]) {
     }
 }
 
+/// The bits a heading `level` deep carries. Markdown has six levels and no more, so
+/// three bits hold any of them.
+pub fn depth_bits(level: usize) -> u16 {
+    (level.min(6) as u16) << DEPTH_AT
+}
+
+/// How deep the heading these bits belong to is.
+pub fn depth(bits: u16) -> usize {
+    ((bits & DEPTH) >> DEPTH_AT) as usize
+}
+
 fn inherited(stack: &[Frame]) -> u16 {
     stack.iter().fold(0, |bits, frame| bits | frame.bits)
 }
@@ -176,7 +191,7 @@ fn shape(tag: &Tag) -> (u16, Delimiters) {
         Tag::Link { .. } | Tag::Image { .. } => (LINK | UNCHECKED, Delimiters::Around),
         // A heading's words are bold and coloured wherever they sit in the line; the
         // hashes in front of them are the line's structure, and [`prefix`] has them.
-        Tag::Heading { .. } => (HEADING, Delimiters::None),
+        Tag::Heading { level, .. } => (HEADING | depth_bits(*level as usize), Delimiters::None),
         _ => (0, Delimiters::None),
     }
 }
@@ -395,6 +410,17 @@ mod tests {
     /// words is [`prefix`]'s answer, not the mask's.
     fn marks_a_heading_line_whole() {
         assert_eq!(picture("## Title", -1), "HHHHHHHH");
+    }
+
+    /// The level rides along with the heading bit, so that the colour can count the
+    /// hashes without the line being parsed a second time.
+    #[test]
+    fn carries_how_deep_a_heading_is() {
+        assert_eq!(depth(mask("# Title", None)[2]), 1);
+        assert_eq!(depth(mask("###### Title", None)[7]), 6);
+        // A heading's words carry it wherever they sit in the line.
+        assert_eq!(depth(mask("### A **bold** word", None)[10]), 3);
+        assert_eq!(depth(mask("plain words", None)[0]), 0);
     }
 
     /// What the stepping and backspace rules rest on: wherever the cursor stands, the

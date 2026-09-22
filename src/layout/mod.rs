@@ -376,6 +376,9 @@ mod tests {
         assert_eq!(drawn(&laid_out("## Title", Some(4), 40)), ["## T|itle"]);
         let bits = laid_out("## Title", None, 40).rows[0].cells[0].bits;
         assert!(bits & style::HEADING != 0);
+        // And the cell says how deep the heading was, hashes or no hashes.
+        assert_eq!(style::depth(bits), 2);
+        assert_eq!(style::depth(laid_out("#### Title", None, 40).rows[0].cells[0].bits), 4);
     }
 
     #[test]
@@ -533,6 +536,7 @@ mod tests {
             | style::MARKER
             | style::HIDDEN
             | style::HEADING
+            | style::DEPTH
             | style::UNDERLINE
             | style::UNCHECKED
             | style::LINT;
