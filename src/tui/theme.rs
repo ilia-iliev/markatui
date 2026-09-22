@@ -163,6 +163,12 @@ pub fn content_width() -> u16 {
     config::get().content_width
 }
 
+/// How much of a screen `area_width` cells wide the column takes: the measure above, or
+/// the whole of a screen with no room for it.
+pub fn column_width(area_width: u16) -> u16 {
+    content_width().min(area_width)
+}
+
 /// What the screen is painted on where nothing else has claimed it: the terminal's own
 /// ground, unless the config asked for paper of ours.
 pub fn base() -> Style {

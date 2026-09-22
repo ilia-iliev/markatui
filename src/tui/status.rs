@@ -3,6 +3,7 @@
 
 use super::{App, Mode};
 use crate::editor::Field;
+use crate::tui::keys;
 use crate::tui::theme;
 
 impl App {
@@ -18,7 +19,7 @@ impl App {
                 Some(error) => format!("Save changes?  {error}"),
                 None => "Save changes?".to_string(),
             };
-            return vec![question, "[y] [n] [esc]".to_string()];
+            return vec![question, keys::ANSWERS.to_string()];
         }
         if let Mode::Overwriting(_) = self.mode {
             // The name and not the whole path: it is the file the writer has open, and
@@ -26,11 +27,11 @@ impl App {
             let name = self.editor.path().file_name().unwrap_or_default().to_string_lossy();
             return vec![
                 format!("{name} has external changes. Overwrite?"),
-                "[y] [n] [esc]".to_string(),
+                keys::ANSWERS.to_string(),
             ];
         }
         if let Mode::Muting(rule) = &self.mode {
-            return vec![format!("Never show {rule} again?"), "[y] [n] [esc]".to_string()];
+            return vec![format!("Never show {rule} again?"), keys::ANSWERS.to_string()];
         }
         if self.mode == Mode::Searching {
             return self.search_lines(width);
@@ -110,7 +111,7 @@ impl App {
         if note.is_empty() {
             return left;
         }
-        let room = (theme::content_width().min(width) as usize)
+        let room = (theme::column_width(width) as usize)
             .saturating_sub(left.chars().count() + note.chars().count());
         format!("{left}{}{note}", " ".repeat(room.max(2)))
     }

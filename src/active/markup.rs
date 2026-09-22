@@ -26,15 +26,7 @@ impl Active {
         let marked = run == marker_run(&characters, mark, end, 1)
             && if width == 1 { run % 2 == 1 } else { run >= 2 };
 
-        if marked {
-            self.replace(end, end + width, "");
-            self.replace(start - width, start, "");
-            self.select(start - width, end - width);
-        } else {
-            self.replace(end, end, marker);
-            self.replace(start, start, marker);
-            self.select(start + width, end + width);
-        }
+        self.toggle_pair(start, end, marker, marker, marked);
     }
 
     /// Where the selection runs with the whitespace at its edges left out, or the bare
@@ -63,13 +55,22 @@ impl Active {
             && end + close_len <= self.length()
             && self.slice(end, end + close_len) == close;
 
-        if wrapped {
+        self.toggle_pair(start, end, &open, &close, wrapped);
+    }
+
+    /// Put `open` and `close` either side of `start..end`, or take a pair that is already
+    /// there back off, leaving the same words selected either way. Whether it is there is
+    /// the caller's to say: each marker is written down differently, and so is read back
+    /// differently.
+    fn toggle_pair(&mut self, start: usize, end: usize, open: &str, close: &str, there: bool) {
+        let (open_len, close_len) = (length(open), length(close));
+        if there {
             self.replace(end, end + close_len, "");
             self.replace(start - open_len, start, "");
             self.select(start - open_len, end - open_len);
         } else {
-            self.replace(end, end, &close);
-            self.replace(start, start, &open);
+            self.replace(end, end, close);
+            self.replace(start, start, open);
             self.select(start + open_len, end + open_len);
         }
     }

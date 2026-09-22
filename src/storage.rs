@@ -63,6 +63,12 @@ fn home(variable: &str, default: &str) -> Option<PathBuf> {
     }
 }
 
+/// The directory `path` is in, and so where a file written beside it goes. A path with no
+/// directory of its own is a name in the one the editor was started in.
+pub fn beside(path: &Path) -> &Path {
+    path.parent().unwrap_or_else(|| Path::new("."))
+}
+
 /// Replace `path` atomically with `contents`. The temporary file sits beside the target,
 /// so rename cannot cross filesystems. Existing permissions are retained.
 pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
@@ -75,7 +81,7 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
 }
 
 fn temporary_file(path: &Path) -> io::Result<(PathBuf, File)> {
-    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    let directory = beside(path);
     let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("document");
 
     for _ in 0..100 {
@@ -104,7 +110,7 @@ fn write_and_replace(
     fs::rename(temporary, path)?;
 
     // Linux requires the directory itself to be synced for the rename to survive a crash.
-    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    let directory = beside(path);
     File::open(directory)?.sync_all()
 }
 
@@ -114,7 +120,7 @@ fn write_and_replace(
 /// The name alone is the answer: a relative path is what the document names a picture by,
 /// and is read back from the directory the document is in.
 pub fn write_picture(document: &Path, png: &[u8]) -> io::Result<String> {
-    let directory = document.parent().unwrap_or_else(|| Path::new("."));
+    let directory = beside(document);
     let stem = document.file_stem().and_then(|name| name.to_str()).unwrap_or("picture");
     let name = (1..)
         .map(|number| format!("{stem}-{number}.png"))

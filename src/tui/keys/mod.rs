@@ -22,7 +22,7 @@ use crate::active::Step;
 use crate::editor::Motion;
 use crate::marks::{Align, Mark};
 use crate::tui::config;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -405,9 +405,6 @@ impl Keymap {
 
 /// What a keystroke means while the writer is in the document.
 pub fn editing(key: KeyEvent) -> Action {
-    if key.kind == KeyEventKind::Release {
-        return Action::Nothing;
-    }
     if let Some(action) = config::get().keys.command(key) {
         return action;
     }
@@ -460,9 +457,6 @@ pub fn editing(key: KeyEvent) -> Action {
 /// What a keystroke means while the search bar holds the keyboard. The bar is where the
 /// writer is still typing the word they are looking for, so most keys are its own.
 pub fn searching(key: KeyEvent) -> Action {
-    if key.kind == KeyEventKind::Release {
-        return Action::Nothing;
-    }
     // The key that opened the bar is the third way of closing it, wherever it is.
     if config::get().keys.command(key) == Some(Action::OpenSearch) {
         return Action::CloseSearch;
@@ -489,43 +483,19 @@ pub fn searching(key: KeyEvent) -> Action {
     }
 }
 
-/// What a keystroke means while the quit prompt is up. It is answered by keystroke, so
-/// it takes every one of them.
-pub fn quitting(key: KeyEvent) -> Action {
-    if key.kind == KeyEventKind::Release {
-        return Action::Nothing;
-    }
+/// The keys every question at the foot of the screen is answered by, as the foot of the
+/// screen says them. [`prompt`] is what answers them, so the two are read together.
+pub const ANSWERS: &str = "[y] [n] [esc]";
+
+/// What a keystroke means while a question is up at the foot of the screen: `yes` or
+/// `no` as the question spells them, and Esc backing out of it. Every question takes the
+/// same three answers, so that one at the foot of the screen is always answered the same
+/// way.
+pub fn prompt(key: KeyEvent, yes: Action, no: Action) -> Action {
     match key.code {
-        KeyCode::Char('y' | 'Y') | KeyCode::Enter => Action::SaveAndQuit,
-        KeyCode::Char('n' | 'N') => Action::DiscardAndQuit,
+        KeyCode::Char('y' | 'Y') | KeyCode::Enter => yes,
+        KeyCode::Char('n' | 'N') => no,
         KeyCode::Esc => Action::Cancel,
-        _ => Action::Nothing,
-    }
-}
-
-/// What a keystroke means while the writer is being asked whether to write over a file
-/// somebody else has changed. Yes is a save, which is what it comes to.
-pub fn overwriting(key: KeyEvent) -> Action {
-    if key.kind == KeyEventKind::Release {
-        return Action::Nothing;
-    }
-    match key.code {
-        KeyCode::Char('y' | 'Y') | KeyCode::Enter => Action::Save,
-        KeyCode::Char('n' | 'N') | KeyCode::Esc => Action::Cancel,
-        _ => Action::Nothing,
-    }
-}
-
-/// What a keystroke means while the writer is being asked whether a check should go.
-/// The same three answers as the quit prompt, so that a question at the foot of the
-/// screen is always answered the same way.
-pub fn muting(key: KeyEvent) -> Action {
-    if key.kind == KeyEventKind::Release {
-        return Action::Nothing;
-    }
-    match key.code {
-        KeyCode::Char('y' | 'Y') | KeyCode::Enter => Action::MuteCheck,
-        KeyCode::Char('n' | 'N') | KeyCode::Esc => Action::Cancel,
         _ => Action::Nothing,
     }
 }
@@ -544,6 +514,14 @@ mod tests {
 
     fn control(code: KeyCode) -> Action {
         editing(press(code, KeyModifiers::CONTROL))
+    }
+
+    fn quitting(key: KeyEvent) -> Action {
+        prompt(key, Action::SaveAndQuit, Action::DiscardAndQuit)
+    }
+
+    fn muting(key: KeyEvent) -> Action {
+        prompt(key, Action::MuteCheck, Action::Cancel)
     }
 
     #[test]
@@ -689,15 +667,6 @@ mod tests {
         // And the prompt that Quit puts up is not itself left by the same keys.
         assert_eq!(quitting(press(KeyCode::Esc, KeyModifiers::NONE)), Action::Cancel);
         assert_eq!(quitting(press(KeyCode::Char('d'), KeyModifiers::CONTROL)), Action::Nothing);
-    }
-
-    #[test]
-    fn lets_a_key_release_alone() {
-        let mut key = press(KeyCode::Char('x'), KeyModifiers::NONE);
-        key.kind = KeyEventKind::Release;
-        assert_eq!(editing(key), Action::Nothing);
-        assert_eq!(searching(key), Action::Nothing);
-        assert_eq!(quitting(key), Action::Nothing);
     }
 
     #[test]

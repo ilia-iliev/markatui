@@ -291,7 +291,7 @@ impl Editor {
         let head = split.len();
         let (mut tail, mut tail_separators) = blocks::replacement(&after);
         self.hoist(&mut tail, &mut tail_separators);
-        separators.push("\n\n".to_string());
+        separators.push(blocks::PARAGRAPH.to_string());
         separators.extend(tail_separators);
         split.extend(tail);
 

@@ -38,8 +38,14 @@ impl Editor {
         self.record_cursor();
     }
 
+    /// Whether the cursor stands at the edge of its block the way `step` is going, which
+    /// is where a movement leaves the block for the one beyond it.
+    fn at_block_edge(&self, step: Step) -> bool {
+        self.active.cursor() == if step > 0 { self.active.length() } else { 0 }
+    }
+
     fn step_character(&mut self, step: Step, extend: bool) {
-        let at_edge = self.active.cursor() == if step > 0 { self.active.length() } else { 0 };
+        let at_edge = self.at_block_edge(step);
         // A step off the end of a block carries on into the next one, the way it carries
         // over a line break within one. A block ends where the writer pressed Enter and
         // nowhere else, so stopping there leaves an arrow that does nothing at a place
@@ -56,7 +62,7 @@ impl Editor {
     /// a whole block — the way Ctrl with Left and Right walks from one word's edge to the
     /// next. The ends of the document are where the walk stops.
     fn step_block(&mut self, step: Step, extend: bool) {
-        let at_edge = self.active.cursor() == if step > 0 { self.active.length() } else { 0 };
+        let at_edge = self.at_block_edge(step);
         if !at_edge {
             return self.active.to_block_edge(step);
         }

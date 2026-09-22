@@ -80,6 +80,33 @@ enum Mode {
     Muting(String),
 }
 
+impl Mode {
+    /// What a keystroke means here. A mode is the whole answer to what a key does: Enter
+    /// ends a block while the writer is in the document, and closes the search while they
+    /// are in the bar.
+    fn means(&self, key: event::KeyEvent) -> Action {
+        match self {
+            Mode::Editing => keys::editing(key),
+            Mode::Searching => keys::searching(key),
+            Mode::Quitting => keys::prompt(key, Action::SaveAndQuit, Action::DiscardAndQuit),
+            Mode::Overwriting(_) => keys::prompt(key, Action::Save, Action::Cancel),
+            Mode::Muting(_) => keys::prompt(key, Action::MuteCheck, Action::Cancel),
+        }
+    }
+
+    /// What carries the action out here, kept beside [`Mode::means`]: a mode added to the
+    /// one and not the other is a mode the compiler asks about.
+    fn handler(&self) -> fn(&mut App, Action) {
+        match self {
+            Mode::Editing => App::act_editing,
+            Mode::Searching => App::act_searching,
+            Mode::Quitting => App::act_quitting,
+            Mode::Overwriting(_) => App::act_overwriting,
+            Mode::Muting(_) => App::act_muting,
+        }
+    }
+}
+
 struct App {
     editor: Editor,
     document: view::Document,
@@ -294,14 +321,11 @@ impl App {
     fn press(&mut self, key: event::KeyEvent) {
         // Whatever the config could not read has been read by the writer by now.
         self.notice.clear();
-        let action = match self.mode {
-            Mode::Editing => keys::editing(key),
-            Mode::Searching => keys::searching(key),
-            Mode::Quitting => keys::quitting(key),
-            Mode::Overwriting(_) => keys::overwriting(key),
-            Mode::Muting(_) => keys::muting(key),
-        };
-        self.act(action);
+        // A key coming back up is the same keystroke over again: only the press is meant.
+        if key.kind == event::KeyEventKind::Release {
+            return;
+        }
+        self.act(self.mode.means(key));
     }
 
     fn act(&mut self, action: Action) {
@@ -311,13 +335,7 @@ impl App {
         if !matches!(action, Action::Row(..)) {
             self.goal = None;
         }
-        match self.mode {
-            Mode::Searching => self.act_searching(action),
-            Mode::Quitting => self.act_quitting(action),
-            Mode::Overwriting(_) => self.act_overwriting(action),
-            Mode::Muting(_) => self.act_muting(action),
-            Mode::Editing => self.act_editing(action),
-        }
+        (self.mode.handler())(self, action);
         self.note_hoisted();
     }
 
@@ -446,7 +464,7 @@ impl App {
 
     fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
-        let width = theme::content_width().min(area.width);
+        let width = theme::column_width(area.width);
         self.document.configure(self.grammar, self.reading);
         self.document.rebuild(&self.editor, width, &mut self.gallery);
         // A picture that has just been read pushes everything under it down. The window
@@ -1285,6 +1303,22 @@ mod tests {
         // Read and gone: the writer touches a key and the band is the document's again.
         app.press(event::KeyEvent::new(event::KeyCode::Right, event::KeyModifiers::NONE));
         assert!(app.footer(90).is_empty());
+        forget(&path);
+    }
+
+    /// A key coming back up is the same keystroke over again: a terminal that reports
+    /// releases must not type every letter twice.
+    #[test]
+    fn lets_a_key_release_alone() {
+        let path = document("key-release", "Words.\n");
+        let mut app = app(&path);
+
+        let mut key = event::KeyEvent::new(event::KeyCode::Char('x'), event::KeyModifiers::NONE);
+        app.press(key);
+        key.kind = event::KeyEventKind::Release;
+        app.press(key);
+
+        assert_eq!(app.editor.block(0), "xWords.");
         forget(&path);
     }
 

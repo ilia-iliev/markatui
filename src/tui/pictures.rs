@@ -55,8 +55,7 @@ impl App {
                     .iter()
                     .position(|reference| reference == &file)
                     .expect("the picture reference was just inserted");
-                let path =
-                    self.editor.path().parent().unwrap_or_else(|| Path::new(".")).join(&file);
+                let path = storage::beside(self.editor.path()).join(&file);
                 self.pictures.push(PastedPicture { path, reference: file, ordinal, saved: false });
             }
             Err(error) => self.editor.error = Some(format!("Could not save the picture: {error}")),
@@ -195,5 +194,5 @@ fn picture_target(document: &Path, reference: &str) -> io::Result<PathBuf> {
     if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "picture names must be filenames"));
     }
-    Ok(document.parent().unwrap_or_else(|| Path::new(".")).join(relative))
+    Ok(storage::beside(document).join(relative))
 }

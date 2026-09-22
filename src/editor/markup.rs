@@ -20,30 +20,22 @@ const TABLE: &str = "| Heading | Heading |\n| --- | --- |\n|  |  |";
 
 impl Editor {
     pub fn surround(&mut self, marker: &str) {
-        self.clear_spanning_selection();
-        self.active.surround(marker);
-        self.record_edit();
+        self.on_active(|active| active.surround(marker));
     }
 
     /// Underline, which markdown has no marker of its own for and HTML does.
     pub fn wrap(&mut self, tag: &str) {
-        self.clear_spanning_selection();
-        self.active.wrap(tag);
-        self.record_edit();
+        self.on_active(|active| active.wrap(tag));
     }
 
     /// Put a heading, a bullet, a number or a quote at the head of the lines the writer
     /// is standing on, or take it off them.
     pub fn mark(&mut self, mark: Mark) {
-        self.clear_spanning_selection();
-        self.active.mark_lines(mark);
-        self.record_edit();
+        self.on_active(|active| active.mark_lines(mark));
     }
 
     pub fn fence(&mut self) {
-        self.clear_spanning_selection();
-        self.active.fence();
-        self.record_edit();
+        self.on_active(Active::fence);
     }
 
     /// Set the column the cursor is in to read left, centre or right. Only a table has
@@ -89,9 +81,7 @@ impl Editor {
     }
 
     pub fn insert_link(&mut self, prefix: &str) {
-        self.clear_spanning_selection();
-        self.active.insert_link(prefix);
-        self.record_edit();
+        self.on_active(|active| active.insert_link(prefix));
     }
 
     /// Where the link under the cursor points, if it is standing in one. The address is
@@ -119,8 +109,14 @@ impl Editor {
     /// A picture that has just been written beside the document, named by the block it
     /// goes in.
     pub fn insert_picture(&mut self, file: &str) {
+        self.on_active(|active| active.insert_picture(file));
+    }
+
+    /// A marker key: the block under the cursor is changed, and the edit noted. Every
+    /// one of them is that, and what is here is which change each key asks for.
+    fn on_active(&mut self, change: impl FnOnce(&mut Active)) {
         self.clear_spanning_selection();
-        self.active.insert_picture(file);
+        change(&mut self.active);
         self.record_edit();
     }
 

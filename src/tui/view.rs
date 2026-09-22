@@ -362,5 +362,5 @@ pub fn footer(frame: &mut Frame, area: Rect, text: &str) {
 }
 
 fn footer_column(area: Rect) -> Rect {
-    Rect { width: theme::content_width().min(area.width), ..area }
+    Rect { width: theme::column_width(area.width), ..area }
 }
