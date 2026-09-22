@@ -6,7 +6,7 @@
 //! questions about the file rather than about the document.
 
 use crate::active::Active;
-use crate::blocks;
+use crate::editor::blocks;
 use crate::editor::{Editor, LintState, SearchState};
 use crate::parse;
 use crate::storage;

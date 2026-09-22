@@ -1,5 +1,6 @@
+mod spell;
+
 use crate::parse;
-use crate::spell;
 use crate::text::char_at;
 use harper_core::linting::{FlatConfig, LintGroup, LintKind, StructuredConfig, Suggestion};
 use harper_core::spell::{FstDictionary, MutableDictionary};

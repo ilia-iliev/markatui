@@ -3,9 +3,9 @@
 //! whatever it re-parses into.
 
 use crate::active::Active;
-use crate::blocks;
 use crate::editor::EditRun;
 use crate::editor::Editor;
+use crate::editor::blocks;
 use std::sync::Arc;
 
 impl Editor {

@@ -4,7 +4,7 @@
 //! through, so a click lands where the caret would have.
 
 use super::{App, Mode};
-use crate::link;
+use crate::tui::link;
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::time::{Duration, Instant};
 

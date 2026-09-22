@@ -4,8 +4,8 @@
 
 use super::Editor;
 use crate::active::{Active, Step};
+use crate::editor::search;
 use crate::lint;
-use crate::search;
 use crate::text::byte_offset;
 use std::sync::Arc;
 

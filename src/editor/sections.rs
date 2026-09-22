@@ -8,8 +8,8 @@
 //! moves is the one the writer is looking at.
 
 use crate::active::{Active, Step};
-use crate::blocks;
 use crate::editor::Editor;
+use crate::editor::blocks;
 use crate::marks;
 use crate::parse::{self, Kind};
 use crate::style;

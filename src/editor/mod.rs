@@ -2,10 +2,12 @@
 //! makes of it, what the search is looking at, and the undo behind all of it. This is
 //! what the Qt front end held minus the Qt, so none of it knows there is a terminal.
 
+mod blocks;
 mod file;
 mod findings;
 mod markup;
 mod motion;
+mod search;
 mod sections;
 mod surgery;
 mod undo;
@@ -14,7 +16,7 @@ pub use findings::{Field, LintState, SearchState};
 pub use motion::Motion;
 
 use crate::active::{Active, Step};
-use crate::blocks::{self, Span};
+use crate::editor::blocks::Span;
 use crate::marks;
 use crate::parse;
 use crate::style;

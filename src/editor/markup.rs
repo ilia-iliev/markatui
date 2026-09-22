@@ -6,8 +6,8 @@
 //! what a link looks like is the same question whether one is being written or followed.
 
 use crate::active::Active;
-use crate::blocks;
 use crate::editor::Editor;
+use crate::editor::blocks;
 use crate::marks::{self, Align, Mark};
 use crate::parse;
 use crate::text::byte_offset;

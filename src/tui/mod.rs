@@ -7,6 +7,7 @@ pub(crate) mod clipboard;
 pub mod config;
 pub mod images;
 pub(crate) mod keys;
+mod link;
 mod mouse;
 mod pictures;
 pub(crate) mod probe;
@@ -18,7 +19,6 @@ pub mod view;
 
 use crate::active::Step;
 use crate::editor::{Editor, Motion};
-use crate::link;
 use crate::lint;
 use crate::storage;
 use crate::tui::clipboard::{Clipboard, Paste};
