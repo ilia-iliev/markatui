@@ -63,6 +63,7 @@ impl Active {
         (start != end).then_some((start, end))
     }
 
+    #[cfg(test)]
     pub fn selected_text(&self) -> String {
         match self.selection() {
             Some((start, end)) => self.slice(start, end).to_string(),
@@ -94,11 +95,6 @@ impl Active {
     /// block and came back is the block's own again, pinned where it always was.
     pub fn pin(&mut self, at: usize) {
         self.anchor = Some(at.min(self.length()));
-    }
-
-    pub fn select_all(&mut self) {
-        self.anchor = Some(0);
-        self.place(self.length());
     }
 
     /// The word `at` stands in, as the two ends of it. A position out among the spaces

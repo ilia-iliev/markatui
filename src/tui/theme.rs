@@ -155,14 +155,6 @@ impl Footer {
             _ => None,
         }
     }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Band => "band",
-            Self::Invert => "invert",
-            Self::Paper => "paper",
-        }
-    }
 }
 
 /// How wide the column of text is, in cells. Wider than this and a line of prose is

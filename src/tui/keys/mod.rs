@@ -79,7 +79,6 @@ pub enum Action {
     ToggleReading,
     CloseSearch,
     CycleSearch(Step),
-    ReplaceFound,
     ReplaceAll,
     AcceptLint,
     CycleLint(Step),
