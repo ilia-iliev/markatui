@@ -52,6 +52,8 @@ const MARGIN: usize = 3;
 /// row of it is now one row out. So the last row is the foot's, and the document ends
 /// above it.
 const FOOT: u16 = 1;
+/// How long the scrollbar stays up after the window last moved.
+const SCROLLBAR: Duration = Duration::from_secs(3);
 
 /// What the foot of the screen says when a picture the writer left among the words has
 /// been broken out into a paragraph of its own.
@@ -119,6 +121,10 @@ struct App {
     reading: bool,
     /// The screen row at the top of the window.
     scroll: usize,
+    /// The row the last frame had at the top, and when the window last moved off it:
+    /// the scrollbar is up only for a while after that.
+    drawn_scroll: usize,
+    scrolled_at: Option<Instant>,
     /// Whether the window keeps the caret in view. The wheel lets it go, so a writer can
     /// read on without the line they were writing pulling the screen back; the next thing
     /// they do with the keyboard takes hold of it again.
@@ -190,6 +196,8 @@ impl App {
             grammar: true,
             reading: false,
             scroll: 0,
+            drawn_scroll: 0,
+            scrolled_at: None,
             follow: true,
             column: Rect::ZERO,
             clicked: None,
@@ -462,6 +470,16 @@ impl App {
 
     // ---- drawing ---------------------------------------------------------------
 
+    /// Whether the window has moved lately. The loop looks up at least every [`TICK`], so
+    /// the bar goes within one of those of its time being up.
+    fn scrolling(&mut self) -> bool {
+        if self.scroll != self.drawn_scroll {
+            self.drawn_scroll = self.scroll;
+            self.scrolled_at = Some(Instant::now());
+        }
+        self.scrolled_at.is_some_and(|at| at.elapsed() < SCROLLBAR)
+    }
+
     fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let width = theme::column_width(area.width);
@@ -503,6 +521,9 @@ impl App {
         // Over the rows the layout left empty for them, and after the text: a picture is
         // drawn by the terminal itself, not out of the cells underneath it.
         self.gallery.draw(frame, text, &self.document, self.scroll);
+        if self.scrolling() {
+            view::scrollbar(frame, text, self.scroll, self.document.height());
+        }
 
         let mut y = text.y + text.height;
         for (message, height) in footer.iter().zip(footer_heights) {

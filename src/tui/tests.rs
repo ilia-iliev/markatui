@@ -1083,6 +1083,26 @@ fn the_wheel_scrolls_without_moving_the_cursor() {
     forget(&path);
 }
 
+/// The scrollbar is at the right edge only while the window is moving, and goes a few
+/// seconds after it stops.
+#[test]
+fn shows_the_scrollbar_only_while_scrolling() {
+    let source = (0..20).map(|line| format!("line {line}")).collect::<Vec<_>>().join("\n\n");
+    let path = document("scrollbar", &source);
+    let mut app = app(&path);
+    let mut terminal = Terminal::new(TestBackend::new(90, 9)).expect("a test screen");
+    let edge = |screen: &[String]| screen.iter().any(|row| row.ends_with(view::THUMB));
+
+    assert!(!edge(&frame(&mut app, &mut terminal)), "a scrollbar before any scrolling");
+
+    app.point(pointer(event::MouseEventKind::ScrollDown, 10, 4));
+    assert!(edge(&frame(&mut app, &mut terminal)), "no scrollbar while scrolling");
+
+    app.scrolled_at = app.scrolled_at.map(|at| at - SCROLLBAR);
+    assert!(!edge(&frame(&mut app, &mut terminal)), "the scrollbar stayed after scrolling");
+    forget(&path);
+}
+
 /// The wheel is the window and nothing else, so it works while the writer is being
 /// asked something; a click would move the cursor behind the question, and does not.
 #[test]

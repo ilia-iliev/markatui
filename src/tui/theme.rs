@@ -269,6 +269,11 @@ pub fn selected(style: Style) -> Style {
     style.add_modifier(Modifier::REVERSED)
 }
 
+/// The scrollbar's thumb, in the colour of the markers: there, and quiet about it.
+pub fn scrollbar() -> Color {
+    config::get().palette.muted
+}
+
 pub fn prompt() -> Style {
     prompt_for(config::get())
 }
