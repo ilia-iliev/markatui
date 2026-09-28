@@ -53,7 +53,7 @@ const MARGIN: usize = 3;
 /// above it.
 const FOOT: u16 = 1;
 /// How long the scrollbar stays up after the window last moved.
-const SCROLLBAR: Duration = Duration::from_secs(3);
+const SCROLLBAR: Duration = Duration::from_secs(2);
 
 /// What the foot of the screen says when a picture the writer left among the words has
 /// been broken out into a paragraph of its own.

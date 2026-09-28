@@ -374,9 +374,9 @@ fn footer_column(area: Rect) -> Rect {
     Rect { width: theme::column_width(area.width), ..area }
 }
 
-/// The scrollbar's thumb: a sliver against the right edge, in the colour of structure the
-/// writer is not reading, so it stays out of the way of the words.
-pub const THUMB: &str = "▕";
+/// The scrollbar's thumb: a quarter of a cell wide, in the colour of structure the writer
+/// is not reading, so it stays out of the way of the words.
+pub const THUMB: &str = "▎";
 
 /// The scrollbar down the right edge of `area`: only a thumb, no track, sized to how much
 /// of the document's `height` rows the window shows. A document that fits needs none.
@@ -387,7 +387,8 @@ pub fn scrollbar(frame: &mut Frame, area: Rect, scroll: usize, height: usize) {
     }
     let thumb = (rows * rows / height).max(1);
     let top = scroll.min(height - rows) * (rows - thumb) / (height - rows);
-    let x = area.right() - 1;
+    // A column in from the edge, where a terminal's own padding cannot swallow it.
+    let x = area.right().saturating_sub(2);
     let buffer = frame.buffer_mut();
     for line in top..top + thumb {
         let at = Position::new(x, area.y + line as u16);
