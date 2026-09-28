@@ -1144,3 +1144,36 @@ fn saying_no_to_overwriting_leaves_the_file_and_the_editor_alone() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "Somebody else.");
     forget(&path);
 }
+
+/// A table wider than the column spills into the margins either side of it, centred on
+/// the column, rather than being cut off at its right edge.
+#[test]
+fn spreads_a_wide_table_into_the_margins() {
+    let cell = "x".repeat(theme::content_width() as usize);
+    let path =
+        document("wide-table", &format!("intro\n\n| a | b |\n| - | - |\n| {cell} | {cell} |\n"));
+    let mut app = app(&path);
+    let mut terminal = Terminal::new(TestBackend::new(250, 12)).expect("a test screen");
+    let screen = frame(&mut app, &mut terminal);
+    forget(&path);
+
+    let top = screen.iter().find(|row| row.contains('┌')).expect("the table's top border");
+    let left = top.find('┌').expect("a left corner");
+    assert!(top.ends_with('┐'), "the table is cut off: {top}");
+    let right = 250 - top.chars().count();
+    assert!(left.abs_diff(right) <= 1, "the table is not centred: {left} left, {right} right");
+}
+
+/// A table wider than the whole terminal starts at its left edge.
+#[test]
+fn starts_a_table_wider_than_the_screen_at_its_left_edge() {
+    let cell = "x".repeat(60);
+    let path = document("wider-table", &format!("| a | b |\n| - | - |\n| {cell} | {cell} |\n"));
+    let mut app = app(&path);
+    let mut terminal = Terminal::new(TestBackend::new(90, 12)).expect("a test screen");
+    app.set_mode("reading");
+    let screen = frame(&mut app, &mut terminal);
+    forget(&path);
+
+    assert!(screen.iter().any(|row| row.starts_with('┌')), "{screen:#?}");
+}

@@ -219,13 +219,10 @@ pub(super) fn draw_with_caret(
     for line in 0..area.height {
         let row = scroll + line as usize;
         let Some((index, within)) = document.at(row) else { continue };
-        paint(
-            frame,
-            Rect { y: area.y + line, height: 1, ..column },
-            &document.rows(index)[within],
-            index,
-            &selection,
-        );
+        let drawn = &document.rows(index)[within];
+        let width = drawn.cells.iter().map(|cell| cell.width).sum();
+        let spread = Rect { y: area.y + line, height: 1, ..spread(area, column, width) };
+        paint(frame, spread, drawn, index, &selection);
     }
 
     // A caret is a cell with its two colours swapped, whichever of the two draws it, and
@@ -262,6 +259,18 @@ pub fn column(area: Rect) -> Rect {
 pub(crate) fn column_for(area: Rect, content_width: u16) -> Rect {
     let width = content_width.min(area.width);
     Rect { x: area.x + (area.width - width) / 2, width, ..area }
+}
+
+/// Where a row `width` cells wide is drawn: in the column if it fits, and otherwise out
+/// into the margins either side, centred on the column's middle as far as the terminal
+/// allows. Only a table is ever that wide — everything else wraps.
+fn spread(area: Rect, column: Rect, width: u16) -> Rect {
+    if width <= column.width {
+        return column;
+    }
+    let width = width.min(area.width);
+    let centred = (column.x + column.width / 2).saturating_sub(width / 2).max(area.x);
+    Rect { x: centred.min(area.right() - width), width, ..column }
 }
 
 fn paint(frame: &mut Frame, area: Rect, row: &layout::Row, index: usize, selection: &Selection) {
