@@ -70,7 +70,7 @@ fn fitting(rest: &[Cell], room: u16) -> usize {
 /// Close a row off: where the caret can stand on it, worked out from the cells that came
 /// from somewhere. A row with none of those is an empty line — the one Enter has just
 /// opened — and the caret stands on it at `at`, where the writer's next character will go.
-fn finish(cells: Vec<Cell>, bits: u16, at: usize) -> Row {
+pub(super) fn finish(cells: Vec<Cell>, bits: u16, at: usize) -> Row {
     let mut slots = Vec::new();
     let mut column = 0u16;
     let mut last = None;

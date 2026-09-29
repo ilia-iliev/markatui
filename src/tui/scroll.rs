@@ -33,8 +33,8 @@ impl App {
     /// together, so the next screenful replaces this one rather than merely bringing its
     /// first block into view.
     pub(super) fn page(&mut self, step: Step, extend: bool) {
-        // Rendered images and tables deliberately have no caret mapping. Their first row
-        // still anchors a page movement, so reading mode can page away from them.
+        // A rendered image has no caret mapping. Its first row still anchors a page
+        // movement, so reading mode can page away from it.
         let (row, column) =
             self.document.caret().unwrap_or_else(|| (self.document.top(self.editor.index()), 0));
         let height = self.document.height();

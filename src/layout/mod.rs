@@ -54,7 +54,7 @@ pub struct Row {
     pub bits: u16,
     /// Every column of this row the caret can stand at, in order, with the last standing
     /// past the final character. An empty line has that one place and nothing else. A row
-    /// drawn rather than written — a rule, a fence, a table — has none at all.
+    /// drawn rather than written — a rule, a fence, a table's border — has none at all.
     pub slots: Vec<Slot>,
 }
 
@@ -103,12 +103,13 @@ pub struct Request<'a> {
 pub fn block(request: Request) -> Layout {
     let Request { text, cursor, reveal, width, lints, picture } = request;
     let kind = parse::kind(text);
-    // A table and an image have no cursor mapping worth having: the columns of one and
-    // the picture of the other stand where no character does. Under the cursor they open
-    // up into their markdown unless reading mode has asked for rendered text throughout.
+    // A table and an image have no cursor mapping worth editing in: the columns of one
+    // and the picture of the other stand where no character does. Under the cursor they
+    // open up into their markdown unless reading mode has asked for rendered text
+    // throughout.
     let rendered = cursor.is_none() || !reveal;
     if kind == Kind::Table && rendered {
-        return table(text);
+        return table(text, cursor);
     }
     if kind == Kind::Image && rendered {
         return image(text, picture);
@@ -521,6 +522,22 @@ mod tests {
             ["┌───┬────┐", "│ a │ bb │", "├───┼────┤", "│ 1 │ 2  │", "└───┴────┘"]
         );
         assert_eq!(drawn(&laid_out(source, Some(0), 40))[0], "|| a | bb |");
+    }
+
+    /// Reading mode keeps a table drawn as one under the cursor, and the caret still has
+    /// to stand somewhere in it.
+    #[test]
+    fn puts_the_caret_in_a_table_drawn_under_the_cursor() {
+        let source = "| a | bb |\n| - | -- |\n| 1 | 2 |";
+        let layout = block(Request {
+            text: source,
+            cursor: Some(28),
+            reveal: false,
+            width: 40,
+            lints: &[],
+            picture: None,
+        });
+        assert_eq!(layout.caret, Some((3, 6)));
     }
 
     /// The fill bit rides alongside the style bits on the same number, so it must not be
