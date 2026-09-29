@@ -220,8 +220,7 @@ pub(super) fn draw_with_caret(
         let row = scroll + line as usize;
         let Some((index, within)) = document.at(row) else { continue };
         let drawn = &document.rows(index)[within];
-        let width = drawn.cells.iter().map(|cell| cell.width).sum();
-        let spread = Rect { y: area.y + line, height: 1, ..spread(area, column, width) };
+        let spread = Rect { y: area.y + line, height: 1, ..spread(area, column, drawn) };
         paint(frame, spread, drawn, index, &selection);
     }
 
@@ -239,7 +238,9 @@ pub(super) fn draw_with_caret(
         // where the next character would go and still a place on the screen. Only a
         // terminal no wider than the column has no such place, and there the caret
         // stands on the last cell rather than off the edge.
-        let x = (column.x + at).min(area.right().saturating_sub(1));
+        let (index, within) = document.at(row).expect("a caret on a drawn row");
+        let left = spread(area, column, &document.rows(index)[within]).x;
+        let x = (left + at).min(area.right().saturating_sub(1));
         let position = Position::new(x, area.y + (row - scroll) as u16);
         if native_caret {
             frame.set_cursor_position(position);
@@ -261,10 +262,11 @@ pub(crate) fn column_for(area: Rect, content_width: u16) -> Rect {
     Rect { x: area.x + (area.width - width) / 2, width, ..area }
 }
 
-/// Where a row `width` cells wide is drawn: in the column if it fits, and otherwise out
+/// Where a row is drawn: in the column if it fits, and otherwise out
 /// into the margins either side, centred on the column's middle as far as the terminal
 /// allows. Only a table is ever that wide — everything else wraps.
-fn spread(area: Rect, column: Rect, width: u16) -> Rect {
+fn spread(area: Rect, column: Rect, row: &layout::Row) -> Rect {
+    let width: u16 = row.cells.iter().map(|cell| cell.width).sum();
     if width <= column.width {
         return column;
     }

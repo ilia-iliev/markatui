@@ -1197,3 +1197,22 @@ fn starts_a_table_wider_than_the_screen_at_its_left_edge() {
 
     assert!(screen.iter().any(|row| row.starts_with('┌')), "{screen:#?}");
 }
+
+/// The caret on a table spread into the margins stands on the character it is at, not
+/// where that character would be had the table stayed in the column.
+#[test]
+fn keeps_the_caret_on_its_character_in_a_wide_table() {
+    let cell = "x".repeat(theme::content_width() as usize);
+    let path =
+        document("caret-wide-table", &format!("| q | b |\n| - | - |\n| {cell} | {cell} |\n"));
+    let mut app = app(&path);
+    let mut terminal = Terminal::new(TestBackend::new(250, 12)).expect("a test screen");
+    app.set_mode("reading");
+    app.editor.activate(0, 2);
+    let screen = frame(&mut app, &mut terminal);
+    let position = terminal.backend().cursor_position();
+    forget(&path);
+
+    let row: Vec<char> = screen[position.y as usize].chars().collect();
+    assert_eq!(row.get(position.x as usize), Some(&'q'), "{position:?} in {screen:#?}");
+}
