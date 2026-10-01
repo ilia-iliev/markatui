@@ -59,6 +59,9 @@ const SCROLLBAR: Duration = Duration::from_secs(2);
 /// been broken out into a paragraph of its own.
 const HOISTED: &str = "Inline images are not supported: moved to a paragraph";
 
+/// What the foot of the screen says when copy took the whole document.
+const COPIED: &str = "Document copied to clipboard";
+
 /// The three modes the writer can be in, each with the word it is written down as between
 /// runs and the two flags it means. The plain mode is first, and so is what an unreadable
 /// word or a first run comes to.
@@ -415,6 +418,9 @@ impl App {
     fn copy(&mut self) {
         let copied = self.copied();
         self.clipboard.copy(copied);
+        if self.editor.selection().is_none() {
+            self.notice.push(COPIED.to_string());
+        }
     }
 
     /// What copy puts on the clipboard: the selection, or the whole document where

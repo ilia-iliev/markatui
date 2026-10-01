@@ -711,6 +711,23 @@ fn copies_the_whole_document_when_nothing_is_selected() {
     forget(&path);
 }
 
+/// Copying the whole document says so, since nothing on screen shows what went.
+#[test]
+fn says_when_the_whole_document_is_copied() {
+    let path = document("copy-all-notice", "one two");
+    let mut app = app(&path);
+    // Whoever is running the tests was using this clipboard before they started.
+    let held = app.clipboard.content();
+
+    app.act(Action::Copy);
+    assert_eq!(app.footer(90), [COPIED.to_string()]);
+
+    if let Paste::Words(words) = held {
+        app.clipboard.copy(words);
+    }
+    forget(&path);
+}
+
 #[test]
 fn pastes_the_words_on_the_clipboard() {
     let path = document("paste-words", "A document.");
