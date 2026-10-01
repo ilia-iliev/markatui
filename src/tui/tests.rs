@@ -540,6 +540,33 @@ fn reading_mode_renders_the_active_block_and_disables_grammar() {
     forget(&path);
 }
 
+/// In reading mode the arrows walk the words on screen: a link's brackets and address
+/// are not drawn, so the caret does not stop on them.
+#[test]
+fn walks_only_the_visible_text_in_reading_mode() {
+    let path = document("reading-walk", "a [b](url) c\n\nnext");
+    let mut app = app(&path);
+    app.set_mode("reading");
+    let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("a test screen");
+    frame(&mut app, &mut terminal);
+
+    let mut walk = |app: &mut App, step| {
+        app.act(Action::Move(Motion::Character(step), false));
+        frame(app, &mut terminal);
+        (app.editor.index(), app.editor.active().cursor())
+    };
+    let right: Vec<_> = (0..6).map(|_| walk(&mut app, 1)).collect();
+    assert_eq!(right, [(0, 1), (0, 3), (0, 10), (0, 11), (0, 12), (1, 0)]);
+    let left: Vec<_> = (0..6).map(|_| walk(&mut app, -1)).collect();
+    assert_eq!(left, [(0, 12), (0, 11), (0, 10), (0, 3), (0, 1), (0, 0)]);
+
+    // A word that ends where the link's markup starts is followed by what is drawn next.
+    app.editor.activate(0, 1);
+    app.act(Action::Move(Motion::Word(1), false));
+    assert_eq!(app.editor.active().cursor(), 10);
+    forget(&path);
+}
+
 /// The three modes and the word each is written down as, both ways round.
 #[test]
 fn puts_every_mode_into_one_word_and_back() {

@@ -35,7 +35,7 @@ impl App {
             Action::Learn if self.grammar => self.editor.learn(),
             Action::MuteCheck if self.grammar => self.ask_to_mute(),
             Action::CycleLint(step) => self.cycle_lint(step),
-            Action::Move(motion, extend) => self.editor.move_cursor(motion, extend),
+            Action::Move(motion, extend) => self.move_cursor(motion, extend),
             Action::Row(step, extend) => self.step_row(step, extend),
             Action::Page(step, extend) => self.page(step, extend),
             Action::SelectAll => self.editor.select_all(),

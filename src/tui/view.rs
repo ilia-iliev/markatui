@@ -73,6 +73,16 @@ impl Document {
         Some((self.tops[self.active] + row, column))
     }
 
+    /// Whether the caret has a place to stand `at` characters into block `index`. A block
+    /// with no places at all — a picture — or none laid out yet takes it anywhere.
+    pub fn stands(&self, index: usize, at: usize) -> bool {
+        let Some(layout) = self.layouts.get(index) else {
+            return true;
+        };
+        let mut slots = layout.rows.iter().flat_map(|row| &row.slots).peekable();
+        slots.peek().is_none() || slots.any(|slot| slot.source == at)
+    }
+
     /// The screen row block `index` starts on.
     pub fn top(&self, index: usize) -> usize {
         self.tops[index]
