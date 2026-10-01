@@ -24,6 +24,26 @@ impl App {
         }
     }
 
+    /// Left, right and the word keys. In reading mode the markup is not drawn, so a step
+    /// that lands in it carries on a character at a time to the next thing that is.
+    pub(super) fn move_cursor(&mut self, motion: Motion, extend: bool) {
+        self.editor.move_cursor(motion, extend);
+        let (Motion::Character(step) | Motion::Word(step)) = motion else {
+            return;
+        };
+        while self.reading && !self.document.stands(self.editor.index(), self.cursor()) {
+            let before = (self.editor.index(), self.cursor());
+            self.editor.move_cursor(Motion::Character(step), extend);
+            if (self.editor.index(), self.cursor()) == before {
+                return;
+            }
+        }
+    }
+
+    fn cursor(&self) -> usize {
+        self.editor.active().cursor()
+    }
+
     fn caret_within_block(&self) -> Option<(usize, u16)> {
         let (row, column) = self.document.caret()?;
         Some((row - self.document.top(self.editor.index()), column))

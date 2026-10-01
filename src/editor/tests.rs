@@ -525,6 +525,19 @@ fn steps_from_one_block_into_the_next_and_back() {
     assert_eq!((editor.index(), editor.active().cursor()), (0, 5));
 }
 
+/// Ctrl with Left and Right at the edge of a block carries on into the next one, the way
+/// a plain arrow does, rather than holding the cursor where it is.
+#[test]
+fn walks_a_word_on_into_the_next_block() {
+    let mut editor = document("alpha\n\nbeta");
+    editor.activate(0, 5);
+    editor.move_cursor(Motion::Word(1), false);
+    assert_eq!((editor.index(), editor.active().cursor()), (1, 0));
+
+    editor.move_cursor(Motion::Word(-1), false);
+    assert_eq!((editor.index(), editor.active().cursor()), (0, 5));
+}
+
 /// Ctrl with the arrows walks the blocks the way Ctrl with Left and Right walks the
 /// words: one press to the edge of the block the cursor stands in, and every press
 /// after it a whole block along.

@@ -540,6 +540,33 @@ fn reading_mode_renders_the_active_block_and_disables_grammar() {
     forget(&path);
 }
 
+/// In reading mode the arrows walk the words on screen: a link's brackets and address
+/// are not drawn, so the caret does not stop on them.
+#[test]
+fn walks_only_the_visible_text_in_reading_mode() {
+    let path = document("reading-walk", "a [b](url) c\n\nnext");
+    let mut app = app(&path);
+    app.set_mode("reading");
+    let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("a test screen");
+    frame(&mut app, &mut terminal);
+
+    let mut walk = |app: &mut App, step| {
+        app.act(Action::Move(Motion::Character(step), false));
+        frame(app, &mut terminal);
+        (app.editor.index(), app.editor.active().cursor())
+    };
+    let right: Vec<_> = (0..6).map(|_| walk(&mut app, 1)).collect();
+    assert_eq!(right, [(0, 1), (0, 3), (0, 10), (0, 11), (0, 12), (1, 0)]);
+    let left: Vec<_> = (0..6).map(|_| walk(&mut app, -1)).collect();
+    assert_eq!(left, [(0, 12), (0, 11), (0, 10), (0, 3), (0, 1), (0, 0)]);
+
+    // A word that ends where the link's markup starts is followed by what is drawn next.
+    app.editor.activate(0, 1);
+    app.act(Action::Move(Motion::Word(1), false));
+    assert_eq!(app.editor.active().cursor(), 10);
+    forget(&path);
+}
+
 /// The three modes and the word each is written down as, both ways round.
 #[test]
 fn puts_every_mode_into_one_word_and_back() {
@@ -668,6 +695,36 @@ fn cuts_only_what_is_selected() {
     app.act(Action::Move(crate::editor::Motion::Word(1), true));
     app.act(Action::Cut);
     assert_eq!(app.editor.block(0), " two");
+    forget(&path);
+}
+
+/// Copy with nothing selected takes the whole document.
+#[test]
+fn copies_the_whole_document_when_nothing_is_selected() {
+    let path = document("copy-all", "one two\n\nthree");
+    let app = app(&path);
+    assert_eq!(app.copied(), "one two\n\nthree");
+
+    let mut app = app;
+    app.act(Action::Move(crate::editor::Motion::Word(1), true));
+    assert_eq!(app.copied(), "one");
+    forget(&path);
+}
+
+/// Copying the whole document says so, since nothing on screen shows what went.
+#[test]
+fn says_when_the_whole_document_is_copied() {
+    let path = document("copy-all-notice", "one two");
+    let mut app = app(&path);
+    // Whoever is running the tests was using this clipboard before they started.
+    let held = app.clipboard.content();
+
+    app.act(Action::Copy);
+    assert_eq!(app.footer(90), [COPIED.to_string()]);
+
+    if let Paste::Words(words) = held {
+        app.clipboard.copy(words);
+    }
     forget(&path);
 }
 
