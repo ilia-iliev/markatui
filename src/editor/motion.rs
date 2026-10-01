@@ -29,7 +29,7 @@ impl Editor {
         }
         match motion {
             Motion::Character(step) => self.step_character(step, extend),
-            Motion::Word(step) => self.active.step_word(step),
+            Motion::Word(step) => self.step_word(step, extend),
             Motion::Line(step) => self.step_line(step, extend),
             Motion::LineEdge(step) => self.active.to_line_edge(step),
             Motion::Block(step) => self.step_block(step, extend),
@@ -45,16 +45,23 @@ impl Editor {
     }
 
     fn step_character(&mut self, step: Step, extend: bool) {
-        let at_edge = self.at_block_edge(step);
         // A step off the end of a block carries on into the next one, the way it carries
         // over a line break within one. A block ends where the writer pressed Enter and
         // nowhere else, so stopping there leaves an arrow that does nothing at a place
         // the writing does not stop at.
-        if at_edge {
-            self.leave(step, extend);
-            return;
+        if self.at_block_edge(step) {
+            return self.leave(step, extend);
         }
         self.active.step(step);
+    }
+
+    /// Ctrl with Left and Right, which carry on into the next block from an edge the way
+    /// a plain arrow does.
+    fn step_word(&mut self, step: Step, extend: bool) {
+        if self.at_block_edge(step) {
+            return self.leave(step, extend);
+        }
+        self.active.step_word(step);
     }
 
     /// Ctrl with an arrow: the edge of the block the cursor stands in, and from an edge
