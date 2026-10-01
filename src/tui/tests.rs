@@ -671,6 +671,19 @@ fn cuts_only_what_is_selected() {
     forget(&path);
 }
 
+/// Copy with nothing selected takes the whole document.
+#[test]
+fn copies_the_whole_document_when_nothing_is_selected() {
+    let path = document("copy-all", "one two\n\nthree");
+    let app = app(&path);
+    assert_eq!(app.copied(), "one two\n\nthree");
+
+    let mut app = app;
+    app.act(Action::Move(crate::editor::Motion::Word(1), true));
+    assert_eq!(app.copied(), "one");
+    forget(&path);
+}
+
 #[test]
 fn pastes_the_words_on_the_clipboard() {
     let path = document("paste-words", "A document.");

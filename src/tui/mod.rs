@@ -413,11 +413,17 @@ impl App {
     }
 
     fn copy(&mut self) {
-        let selected = self.editor.selected_text();
-        if selected.is_empty() {
-            return;
+        let copied = self.copied();
+        self.clipboard.copy(copied);
+    }
+
+    /// What copy puts on the clipboard: the selection, or the whole document where
+    /// nothing is selected.
+    fn copied(&self) -> String {
+        match self.editor.selection() {
+            Some(_) => self.editor.selected_text(),
+            None => self.editor.source(),
         }
-        self.clipboard.copy(selected);
     }
 
     fn paste(&mut self) {
