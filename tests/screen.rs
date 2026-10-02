@@ -10,7 +10,7 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::CellDiffOption;
 use ratatui_image::picker::Picker;
 
-/// The sample document drawn on a screen `width` by `height`, as one string per row with
+/// The document drawn on a screen `width` by `height`, as one string per row with
 /// the trailing spaces off.
 fn screen(editor: &Editor, width: u16, height: u16) -> Vec<String> {
     drawn(editor, width, height, &mut view::Document::default(), &mut Gallery::blind())
@@ -68,12 +68,9 @@ fn drawn_and_resent(
 /// A document of its own with the sample picture beside it, so that a test drawing one
 /// disturbs nothing else.
 fn beside_a_picture(name: &str, source: &str) -> std::path::PathBuf {
-    let directory = std::env::temp_dir().join(format!("markatui-{name}-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).expect("a temporary directory");
-    let path = directory.join("post.md");
-    std::fs::write(&path, source).expect("a document");
+    let path = written(name, source);
     let sample = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/image.png");
-    std::fs::copy(sample, directory.join("image.png")).expect("a picture beside it");
+    std::fs::copy(sample, path.with_file_name("image.png")).expect("a picture beside it");
     path
 }
 
@@ -337,7 +334,7 @@ fn draws_a_paragraph_the_key_turned_into_a_heading_a_list_and_a_quote() {
     editor.activate(0, 0);
 
     assert_eq!(editor.source(), "## Title\n\n- one\n- two\n\n> quoted");
-    let rows = screen_of(&editor, 60, 20);
+    let rows = screen(&editor, 60, 20);
     assert!(rows.iter().any(|row| row.trim() == "\u{2022} one"), "{rows:#?}");
     assert!(rows.iter().any(|row| row.trim() == "\u{2022} two"), "{rows:#?}");
     assert!(rows.iter().any(|row| row.contains("\u{258e} quoted")), "{rows:#?}");
@@ -356,7 +353,7 @@ fn sets_a_column_in_the_file_and_draws_the_table_as_it_always_did() {
     assert!(editor.block(0).contains("| :---: | --- |"), "{}", editor.block(0));
 
     editor.activate(1, 0);
-    let rows = screen_of(&editor, 60, 20);
+    let rows = screen(&editor, 60, 20);
     assert!(
         rows.iter().any(|row| row.trim()
             == "\u{250c}\u{2500}\u{2500}\u{2500}\u{252c}\u{2500}\u{2500}\u{2500}\u{2510}"),
@@ -374,9 +371,4 @@ fn written(name: &str, source: &str) -> std::path::PathBuf {
     let path = directory.join("post.md");
     std::fs::write(&path, source).expect("a document to open");
     path
-}
-
-/// The same as [`screen`], for a document a test built rather than the sample.
-fn screen_of(editor: &Editor, width: u16, height: u16) -> Vec<String> {
-    drawn(editor, width, height, &mut view::Document::default(), &mut Gallery::blind())
 }

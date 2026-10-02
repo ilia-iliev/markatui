@@ -89,10 +89,7 @@ static CONFIG: OnceLock<Config> = OnceLock::new();
 /// this is the first thing they have set. The file itself need not be there — an empty
 /// one is what the defaults above say in longhand.
 pub fn path() -> Result<PathBuf, String> {
-    let path = storage::config_file().ok_or("HOME is not set")?;
-    let directory = path.parent().expect("the config has a config directory");
-    fs::create_dir_all(directory).map_err(|error| format!("{}: {error}", directory.display()))?;
-    Ok(path)
+    storage::writable_config(storage::CONFIG_FILE).map_err(|error| error.to_string())
 }
 
 /// Select a preset for future runs and leave the rest of the config untouched.

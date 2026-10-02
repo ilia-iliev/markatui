@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 const DEFAULT: &str = include_str!("../../../assets/keymap.toml");
 
 pub fn path() -> io::Result<PathBuf> {
-    storage::keymap_file().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is not set"))
+    storage::writable_config(storage::KEYMAP_FILE)
 }
 
 /// Install the shipped keymap when this user does not have one yet.
@@ -32,8 +32,6 @@ pub fn reset() -> Result<PathBuf, String> {
 }
 
 fn write_shipped(path: &Path) -> io::Result<()> {
-    let directory = path.parent().expect("the keymap has a config directory");
-    fs::create_dir_all(directory)?;
     storage::write_atomic(path, DEFAULT.as_bytes())
 }
 

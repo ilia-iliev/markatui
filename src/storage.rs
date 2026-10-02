@@ -22,9 +22,15 @@ pub fn config_file() -> Option<PathBuf> {
     Some(config_dir()?.join(CONFIG_FILE))
 }
 
-/// Which key each command is on: `~/.config/markatui/keymap.toml`.
-pub fn keymap_file() -> Option<PathBuf> {
-    Some(config_dir()?.join(KEYMAP_FILE))
+/// One of the writer's own files — `CONFIG_FILE` or `KEYMAP_FILE` — ready to be written
+/// to: the directory it lives in is made if this is the first thing they have set.
+pub fn writable_config(name: &str) -> io::Result<PathBuf> {
+    let directory =
+        config_dir().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is not set"))?;
+    fs::create_dir_all(&directory).map_err(|error| {
+        io::Error::new(error.kind(), format!("{}: {error}", directory.display()))
+    })?;
+    Ok(directory.join(name))
 }
 
 /// The writer's own words — names, jargon, the title of the thing they are writing
