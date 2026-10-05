@@ -187,12 +187,11 @@ impl Editor {
         self.record_cursor();
     }
 
+    /// Drawn from the top the way a drag would draw it, so that a document of one block
+    /// has the selection as that block's own rather than pinned in a block it never left.
     pub fn select_all(&mut self) {
-        self.store_active();
-        self.anchor = Some((0, 0));
-        self.go_to(self.blocks.len() - 1, true);
-        self.active.to_block_edge(1);
-        self.record_cursor();
+        self.activate(0, 0);
+        self.extend_to(usize::MAX, usize::MAX);
     }
 
     pub fn clear_selection(&mut self) {

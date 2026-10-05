@@ -684,6 +684,27 @@ fn brings_a_selection_back_into_the_block_it_was_pinned_in() {
     assert_eq!(texts(&editor), ["alX", "beta"]);
 }
 
+/// A document that is one block has nothing to span, and the selection is the block's
+/// own: Backspace takes out the whole of it, not the character before the cursor.
+#[test]
+fn deletes_the_whole_document_when_it_is_one_block() {
+    for delete in [Editor::delete, Editor::delete_word] {
+        let mut editor = document("- one\n- two\n- three");
+        editor.select_all();
+        delete(&mut editor, -1);
+        assert_eq!(texts(&editor), [""]);
+    }
+}
+
+#[test]
+fn deletes_the_whole_document() {
+    let mut editor = document("# Title\n\nalpha\n\nbeta");
+    editor.activate(1, 2);
+    editor.select_all();
+    editor.delete(-1);
+    assert_eq!(texts(&editor), [""]);
+}
+
 #[test]
 fn selects_the_whole_document_and_reads_it_back() {
     let mut editor = document("alpha\n\nbeta");
