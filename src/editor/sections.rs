@@ -93,6 +93,64 @@ impl Editor {
         self.record_edit();
     }
 
+    /// Shift with Backspace and Delete: take out what the key above would move — the list
+    /// item with whatever is nested under it, the table row, the line of code, or the
+    /// whole block. Backspace leaves the caret at the end of what was before it, Delete
+    /// at the head of what was after.
+    pub fn delete_section(&mut self, step: Step) {
+        if let Some(span) = self.selection().filter(|span| span.first != span.last) {
+            self.delete_blocks(span.first, span.last, step);
+            return;
+        }
+        if !self.delete_lines(step) {
+            self.delete_blocks(self.index, self.index, step);
+        }
+    }
+
+    /// The run of lines the cursor or the selection touches, taken out of the block.
+    /// `false` where that run is the whole block, or no section of it.
+    fn delete_lines(&mut self, step: Step) -> bool {
+        let (first, last) = self.active.touched_lines();
+        let Some((text, first)) = deleted(self.active.text(), self.kind(), first, last) else {
+            return false;
+        };
+        self.anchor = None;
+        self.active = Active::new(&text, 0);
+        let at = match first.checked_sub(1).filter(|_| step < 0) {
+            Some(line) => self.active.offset(line, usize::MAX),
+            None => self.active.offset(first, 0),
+        };
+        self.active.place(at);
+        self.record_edit();
+        true
+    }
+
+    /// Take out the blocks `first..=last`. The document always keeps one block to type
+    /// into, and the source after the last block — the file's own ending — outlives it.
+    fn delete_blocks(&mut self, first: usize, last: usize, step: Step) {
+        self.store_active();
+        self.anchor = None;
+        let mut first = first;
+        if first == 0 && last + 1 == self.blocks.len() {
+            self.blocks[0] = Arc::default();
+            first = 1;
+        }
+        if last + 1 == self.blocks.len() {
+            self.gaps[first] = self.gaps[last + 1].clone();
+        }
+        self.remove_blocks(first, last + 1 - first);
+        if first > 0 && first < self.blocks.len() {
+            self.keep_apart(first);
+        }
+        let (index, at) = match first.checked_sub(1) {
+            Some(before) if step < 0 || first == self.blocks.len() => (before, usize::MAX),
+            _ => (first, 0),
+        };
+        self.index = index;
+        self.active = Active::new(&self.blocks[index], at);
+        self.record_edit();
+    }
+
     /// Open the gap before block `at` where what is written there no longer keeps the two
     /// blocks either side of it apart. Markdown has pairs that need nothing between them
     /// one way round and a blank line the other — a list under a paragraph reads as a
@@ -124,13 +182,7 @@ fn moved(text: &str, kind: Kind, first: usize, last: usize, step: Step) -> Optio
     let block: Vec<&str> = text.split('\n').collect();
     let within = movable(&block, kind);
     let nests = nests(kind);
-    let (first, last) = match nests {
-        true => (head(&block, first, &within), tail(&block, head(&block, last, &within), &within)),
-        false => (first, last),
-    };
-    if first < within.start || last >= within.end || first > last {
-        return None;
-    }
+    let (first, last) = section(&block, kind, first, last)?;
 
     let mut lines = block.clone();
     if step < 0 {
@@ -165,6 +217,30 @@ fn moved(text: &str, kind: Kind, first: usize, last: usize, step: Step) -> Optio
         last: far,
         shift,
     })
+}
+
+/// The lines `first..=last` widened to the whole runs they touch. `None` where they reach
+/// into the block's furniture, which is no section of it.
+fn section(block: &[&str], kind: Kind, first: usize, last: usize) -> Option<(usize, usize)> {
+    let within = movable(block, kind);
+    let (first, last) = match nests(kind) {
+        true => (head(block, first, &within), tail(block, head(block, last, &within), &within)),
+        false => (first, last),
+    };
+    (first >= within.start && last < within.end && first <= last).then_some((first, last))
+}
+
+/// The block with the run touching lines `first..=last` taken out, and the line the run
+/// started on. `None` where the run is the whole block, or no section of it.
+fn deleted(text: &str, kind: Kind, first: usize, last: usize) -> Option<(String, usize)> {
+    let block: Vec<&str> = text.split('\n').collect();
+    let (first, last) = section(&block, kind, first, last)?;
+    if first == 0 && last + 1 == block.len() {
+        return None;
+    }
+    let mut lines = block.clone();
+    lines.drain(first..=last);
+    Some((rewritten(&lines, &block), first))
 }
 
 /// The block as it reads once the run has moved. The numbers of an ordered list stay with
@@ -394,5 +470,133 @@ mod tests {
         assert_eq!(texts(&editor), ["two", "one"]);
         editor.undo();
         assert_eq!(texts(&editor), ["one", "two"]);
+    }
+
+    /// Shift+Backspace leaves the caret at the end of the item above, Shift+Delete at the
+    /// head of the one below.
+    #[test]
+    fn deletes_the_list_item_the_cursor_is_in() {
+        let mut editor = document("- one\n- two\n- three");
+        editor.activate(0, 8);
+        editor.delete_section(-1);
+        assert_eq!(texts(&editor), ["- one\n- three"]);
+        assert_eq!(editor.active().cursor(), 5);
+
+        let mut editor = document("- one\n- two\n- three");
+        editor.activate(0, 8);
+        editor.delete_section(1);
+        assert_eq!(texts(&editor), ["- one\n- three"]);
+        assert_eq!(editor.active().cursor(), 6);
+    }
+
+    #[test]
+    fn deletes_an_item_with_what_is_nested_under_it() {
+        let mut editor = document("- one\n  - one a\n- two");
+        editor.activate(0, 2);
+        editor.delete_section(-1);
+        assert_eq!(texts(&editor), ["- two"]);
+        assert_eq!(editor.active().cursor(), 0);
+    }
+
+    #[test]
+    fn leaves_a_numbered_list_counting_after_a_delete() {
+        let mut editor = document("1. one\n2. two\n3. three");
+        editor.activate(0, 10);
+        editor.delete_section(-1);
+        assert_eq!(texts(&editor), ["1. one\n2. three"]);
+    }
+
+    #[test]
+    fn deletes_a_table_row_and_never_its_headings() {
+        let mut editor = document("| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |");
+        editor.activate(0, 26);
+        editor.delete_section(-1);
+        assert_eq!(texts(&editor), ["| a | b |\n| --- | --- |\n| 3 | 4 |"]);
+    }
+
+    #[test]
+    fn deletes_a_line_of_code_between_the_fences() {
+        let mut editor = document("```\nfirst\nsecond\n```");
+        editor.activate(0, 6);
+        editor.delete_section(1);
+        assert_eq!(texts(&editor), ["```\nsecond\n```"]);
+    }
+
+    /// Where the lines are not things of their own, the block goes. Backspace lands at the
+    /// end of the block before, Delete at the head of the block after.
+    #[test]
+    fn deletes_a_paragraph_whole() {
+        let mut editor = document("one\n\ntwo\n\nthree");
+        editor.activate(1, 1);
+        editor.delete_section(-1);
+        assert_eq!(texts(&editor), ["one", "three"]);
+        assert_eq!((editor.index(), editor.active().cursor()), (0, 3));
+        assert_eq!(editor.source(), "one\n\nthree");
+
+        let mut editor = document("one\n\ntwo\n\nthree");
+        editor.activate(1, 1);
+        editor.delete_section(1);
+        assert_eq!((editor.index(), editor.active().cursor()), (1, 0));
+    }
+
+    /// The last item of a list is the whole list.
+    #[test]
+    fn deletes_the_block_of_a_list_with_one_item() {
+        let mut editor = document("intro\n\n- one");
+        editor.activate(1, 2);
+        editor.delete_section(-1);
+        assert_eq!(texts(&editor), ["intro"]);
+        assert_eq!(editor.source(), "intro");
+    }
+
+    #[test]
+    fn keeps_the_end_of_the_file_when_the_last_block_goes() {
+        let mut editor = document("one\n\ntwo\n");
+        editor.activate(1, 0);
+        editor.delete_section(-1);
+        assert_eq!(editor.source(), "one\n");
+    }
+
+    #[test]
+    fn leaves_an_empty_block_when_the_only_one_goes() {
+        let mut editor = document("only\n");
+        editor.delete_section(-1);
+        assert_eq!(texts(&editor), [""]);
+        assert_eq!(editor.source(), "\n");
+    }
+
+    /// A heading needs no blank line around it; the paragraphs either side of one do.
+    #[test]
+    fn opens_a_seam_a_delete_would_close() {
+        let mut editor = document("para\n# Title\ntext");
+        editor.activate(1, 0);
+        editor.delete_section(-1);
+        assert_eq!(texts(&editor), ["para", "text"]);
+        assert_eq!(editor.source(), "para\n\ntext");
+    }
+
+    #[test]
+    fn deletes_every_block_a_selection_touches() {
+        let mut editor = document("one\n\ntwo\n\nthree\n\nfour");
+        editor.activate(1, 1);
+        editor.extend_to(2, 2);
+        editor.delete_section(-1);
+        assert_eq!(texts(&editor), ["one", "four"]);
+    }
+
+    #[test]
+    fn takes_one_undo_to_put_a_deleted_section_back() {
+        let mut editor = document("one\n\n- a\n  - b\n- c");
+        editor.activate(1, 2);
+        editor.delete_section(-1);
+        assert_eq!(texts(&editor), ["one", "- c"]);
+        editor.undo();
+        assert_eq!(texts(&editor), ["one", "- a\n  - b\n- c"]);
+        assert_eq!((editor.index(), editor.active().cursor()), (1, 2));
+
+        editor.activate(0, 0);
+        editor.delete_section(-1);
+        editor.undo();
+        assert_eq!(texts(&editor), ["one", "- a\n  - b\n- c"]);
     }
 }

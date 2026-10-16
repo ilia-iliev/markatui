@@ -40,6 +40,8 @@ pub enum Action {
     Delete(Step),
     /// Ctrl with Backspace and Delete: the same, as far as Ctrl with the arrows walks.
     DeleteWord(Step),
+    /// Shift with Backspace and Delete: the section Alt with the arrows would move.
+    DeleteSection(Step),
     Enter,
     /// Shift+Enter: a line break inside the block, wherever Enter has something else to
     /// do — a list item, a table row, the end of a heading. In a paragraph Enter leaves
@@ -135,6 +137,8 @@ pub fn editing(key: KeyEvent) -> Action {
 
         (KeyCode::Backspace, true, _) => Action::DeleteWord(-1),
         (KeyCode::Delete, true, _) => Action::DeleteWord(1),
+        (KeyCode::Backspace, false, true) => Action::DeleteSection(-1),
+        (KeyCode::Delete, false, true) => Action::DeleteSection(1),
         (KeyCode::Backspace, false, _) => Action::Delete(-1),
         (KeyCode::Delete, false, _) => Action::Delete(1),
         (KeyCode::Enter, false, true) => Action::LineBreak,
@@ -314,6 +318,14 @@ mod tests {
         assert_eq!(control(KeyCode::Delete), Action::DeleteWord(1));
         assert_eq!(plain(KeyCode::Backspace), Action::Delete(-1));
         assert_eq!(plain(KeyCode::Delete), Action::Delete(1));
+    }
+
+    /// Shift with Backspace and Delete takes out the section Alt with the arrows moves.
+    #[test]
+    fn deletes_a_section_on_shift_with_the_delete_keys() {
+        let shift = |code| editing(press(code, KeyModifiers::SHIFT));
+        assert_eq!(shift(KeyCode::Backspace), Action::DeleteSection(-1));
+        assert_eq!(shift(KeyCode::Delete), Action::DeleteSection(1));
     }
 
     #[test]
