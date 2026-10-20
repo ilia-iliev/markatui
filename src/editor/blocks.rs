@@ -6,8 +6,9 @@
 //! the file that was opened, byte for byte. There is one more gap than there are blocks:
 //! before the first, between each pair, and after the last.
 
-use crate::parse;
-use crate::text::byte_offset;
+use crate::marks;
+use crate::parse::{self, Kind};
+use crate::text::{byte_offset, length};
 use std::sync::Arc;
 
 /// Where a selection runs, in document order: a block and a byte offset into it at either
@@ -84,6 +85,18 @@ pub fn replacement(source: &str) -> (Vec<String>, Vec<String>) {
     let mut separators = gaps[1..last + 1].to_vec();
     open_paragraphs(&mut blocks, &mut separators);
     (blocks, separators)
+}
+
+/// Two neighbouring blocks run together, and where the second starts in what they make.
+/// Two lists join as one: the items of the lower go on as items of the upper rather than
+/// running into its last line.
+pub fn joined(first: &str, second: &str) -> (String, usize) {
+    let lists = parse::kind(first) == Kind::List && parse::kind(second) == Kind::List;
+    let (seam, second) = match lists {
+        true => ("\n", marks::continued(first, second)),
+        false => ("", second.to_string()),
+    };
+    (format!("{first}{seam}{second}"), length(first) + length(seam))
 }
 
 /// What goes between two blocks broken apart: a blank line, which is what a paragraph

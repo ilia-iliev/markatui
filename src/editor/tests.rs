@@ -429,6 +429,30 @@ fn merges_a_block_into_the_one_before_it() {
     assert_eq!(editor.source(), "onetwo");
 }
 
+/// Two lists joined are one list: the items of the lower one go on as items of the upper
+/// one, counting on from its last, rather than running into its last line.
+#[test]
+fn joins_two_lists_into_one() {
+    let mut editor = document("1. one\n2. two\n\nnote\n\n1. three\n2. four");
+    editor.activate(1, 4);
+    (0..5).for_each(|_| editor.delete(-1));
+    assert_eq!(texts(&editor), ["1. one\n2. two", "1. three\n2. four"]);
+    editor.activate(1, 0);
+    editor.delete(-1);
+    assert_eq!(texts(&editor), ["1. one\n2. two\n3. three\n4. four"]);
+    assert_eq!(editor.active().cursor(), 14);
+    assert_eq!(editor.source(), "1. one\n2. two\n3. three\n4. four");
+
+    // Delete at the end of the upper list is the same join from the other side.
+    let mut editor = document("- one\n\npara\n\n- two");
+    editor.activate(1, 4);
+    (0..5).for_each(|_| editor.delete(-1));
+    editor.activate(0, 5);
+    editor.delete(1);
+    assert_eq!(texts(&editor), ["- one\n- two"]);
+    assert_eq!(editor.active().cursor(), 5);
+}
+
 #[test]
 fn leaves_the_first_block_alone_at_its_start() {
     let mut editor = document("one");

@@ -31,10 +31,8 @@ impl Editor {
 
     pub(super) fn merge_with_previous(&mut self) {
         let Some(previous) = self.index.checked_sub(1) else { return };
-        let cursor = crate::text::length(&self.blocks[previous]);
-        let tail = self.active.text().to_string();
-
-        Arc::make_mut(&mut self.blocks[previous]).push_str(&tail);
+        let (joined, cursor) = blocks::joined(&self.blocks[previous], self.active.text());
+        self.blocks[previous] = Arc::new(joined);
         // The source between the two blocks goes with the seam; what followed the second
         // one now follows the joined block.
         self.gaps[self.index] = self.gaps[self.index + 1].clone();
@@ -52,8 +50,7 @@ impl Editor {
             return;
         }
         let cursor = self.active.cursor();
-        let mut joined = self.active.text().to_string();
-        joined.push_str(&self.blocks[next]);
+        let (joined, _) = blocks::joined(self.active.text(), &self.blocks[next]);
         self.blocks[self.index] = Arc::new(joined);
         // The source between the two goes with the seam; what followed the second block
         // now follows the joined one.

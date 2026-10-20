@@ -102,6 +102,11 @@ fn lead(line: &str) -> Prefix {
     style::prefix(line, Kind::Paragraph, false)
 }
 
+/// The line with `marker` in place of the one it carried.
+fn remarked(line: &str, prefix: &Prefix, marker: &str) -> String {
+    format!("{}{marker}{}", head(line, prefix), body(line, prefix))
+}
+
 /// The indent and quote markers, which stay whatever the key does.
 fn head<'a>(line: &'a str, prefix: &Prefix) -> &'a str {
     &line[..byte_offset(line, prefix.len - prefix.marker_len())]
@@ -147,7 +152,29 @@ pub fn renumbered(line: &str, like: &str) -> String {
     let (Marker::Numbered(_), Marker::Numbered(number)) = (&prefix.marker, &like.marker) else {
         return line.to_string();
     };
-    format!("{}{number} {}", head(line, &prefix), body(line, &prefix))
+    remarked(line, &prefix, &format!("{number} "))
+}
+
+/// The lines of a list joined on under `above`, its items counting on from the last item
+/// of `above` they line up with. A list under bullets, or under nothing it lines up with,
+/// keeps its numbers.
+pub fn continued(above: &str, below: &str) -> String {
+    let lines: Vec<&str> = below.split('\n').collect();
+    let first = lead(lines[0]);
+    let last = above
+        .split('\n')
+        .rev()
+        .map(lead)
+        .find(|prefix| prefix.indent == first.indent && prefix.quote == first.quote);
+    let (Marker::Numbered(number), Some(Marker::Numbered(last))) =
+        (&first.marker, last.map(|prefix| prefix.marker))
+    else {
+        return below.to_string();
+    };
+    let to = count(&last) + 1;
+    let mut counted = counted_from(&lines, to + 1);
+    counted[0] = remarked(lines[0], &first, &numbered(number, to));
+    counted.join("\n")
 }
 
 /// The marker to carry onto the line Enter opens, for a line that is a list item.
@@ -224,7 +251,7 @@ fn counted_from(lines: &[&str], to: u32) -> Vec<String> {
             Some(marker) => {
                 expected += 1;
                 to += 1;
-                counted.push(format!("{}{marker}{}", head(line, &prefix), body(line, &prefix)));
+                counted.push(remarked(line, &prefix, &marker));
             }
             None => counted.push(line.to_string()),
         }
