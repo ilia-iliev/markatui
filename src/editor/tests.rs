@@ -268,6 +268,21 @@ fn counts_the_next_item_of_a_numbered_list() {
     assert_eq!(texts(&editor), ["2. one\n3. "]);
 }
 
+/// The items under the new one move down a place, nested lines and all; a list the
+/// writer numbered some other way is left as they wrote it.
+#[test]
+fn counts_on_the_items_under_a_new_one() {
+    let mut editor = document("1. one\n2. two\n   - under\n3. three\n- other");
+    editor.activate(0, 6);
+    editor.enter();
+    assert_eq!(texts(&editor), ["1. one\n2. \n3. two\n   - under\n4. three", "- other"]);
+
+    let mut editor = document("1. one\n1. two");
+    editor.activate(0, 6);
+    editor.enter();
+    assert_eq!(texts(&editor), ["1. one\n2. \n1. two"]);
+}
+
 /// The one empty item goes and nothing is broken off: there is no line above it to
 /// break away from.
 #[test]

@@ -184,11 +184,50 @@ pub fn item(line: &str) -> Option<Item> {
     })
 }
 
+/// The lines with the items under the first counted on from it, where they were counting
+/// from the number it took: the items under a new one move down a place, lines nested in
+/// them go along, and a list the writer numbered some other way is left as they wrote it.
+pub fn counted_on(lines: &[&str]) -> Vec<String> {
+    let first = lead(lines[0]);
+    let Marker::Numbered(number) = &first.marker else {
+        return lines.iter().map(|line| line.to_string()).collect();
+    };
+    let mut taken = count(number);
+    let mut counting = true;
+    let mut counted = vec![lines[0].to_string()];
+    for line in &lines[1..] {
+        let prefix = lead(line);
+        let nested = line.trim().is_empty() || prefix.indent > first.indent;
+        let sibling = match &prefix.marker {
+            Marker::Numbered(number)
+                if prefix.indent == first.indent && prefix.quote == first.quote =>
+            {
+                (count(number) == taken).then(|| next_number(number))
+            }
+            _ => None,
+        };
+        counting &= nested || sibling.is_some();
+        match sibling.filter(|_| counting) {
+            Some(marker) => {
+                taken += 1;
+                counted.push(format!("{}{marker}{}", head(line, &prefix), body(line, &prefix)));
+            }
+            None => counted.push(line.to_string()),
+        }
+    }
+    counted
+}
+
 /// `3.` after `2.`, keeping whichever of `.` and `)` the writer was using. A number too
 /// long to count with starts again at one rather than overflowing.
 fn next_number(number: &str) -> String {
-    let (digits, punctuation) = number.split_at(number.len() - 1);
-    format!("{}{punctuation} ", digits.parse::<u32>().unwrap_or(0) + 1)
+    let (_, punctuation) = number.split_at(number.len() - 1);
+    format!("{}{punctuation} ", count(number) + 1)
+}
+
+/// What `3.` counts to.
+fn count(number: &str) -> u32 {
+    number[..number.len() - 1].parse().unwrap_or(0)
 }
 
 /// Whether the line is a table's row of dashes: the one row that says how the columns

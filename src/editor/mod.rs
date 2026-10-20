@@ -213,6 +213,7 @@ impl Editor {
         match self.active.item() {
             Some(item) if !item.empty => {
                 self.active.insert(&format!("\n{}", item.next));
+                self.active.count_on();
                 self.record_edit();
                 return;
             }

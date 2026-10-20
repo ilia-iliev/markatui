@@ -160,6 +160,16 @@ impl Active {
         marks::item(self.line())
     }
 
+    /// Count the items under the cursor's line on from the number it carries. Only the
+    /// lines below it change, so the cursor stays where it is.
+    pub fn count_on(&mut self) {
+        let (start, _) = self.line_bounds(self.cursor);
+        let text = self.slice(start, self.length()).to_string();
+        let lines: Vec<&str> = text.split('\n').collect();
+        let counted = marks::counted_on(&lines).join("\n");
+        self.replace(start, self.length(), &counted);
+    }
+
     /// The whole of the line the cursor is standing on.
     pub fn line(&self) -> &str {
         let (start, end) = self.line_bounds(self.cursor);
