@@ -184,15 +184,28 @@ pub fn item(line: &str) -> Option<Item> {
     })
 }
 
-/// The lines with the items under the first counted on from it, where they were counting
-/// from the number it took: the items under a new one move down a place, lines nested in
-/// them go along, and a list the writer numbered some other way is left as they wrote it.
-pub fn counted_on(lines: &[&str]) -> Vec<String> {
+/// The lines with the items under the first moved down a place, for the item Enter is
+/// about to open under it.
+pub fn moved_down(lines: &[&str]) -> Vec<String> {
     let first = lead(lines[0]);
-    let Marker::Numbered(number) = &first.marker else {
-        return lines.iter().map(|line| line.to_string()).collect();
-    };
-    let mut taken = count(number);
+    let Marker::Numbered(number) = &first.marker else { return owned(lines) };
+    counted_from(lines, count(number) + 2)
+}
+
+/// The lines with the items under the first counting from one, for the list they are
+/// left as once the empty item at its head ends the one above.
+pub fn restarted(lines: &[&str]) -> Vec<String> {
+    counted_from(lines, 1)
+}
+
+/// The lines with the items under the first numbered from `to`, where they were counting
+/// on from it: lines nested in them go along, and a list the writer numbered some other
+/// way is left as they wrote it.
+fn counted_from(lines: &[&str], to: u32) -> Vec<String> {
+    let first = lead(lines[0]);
+    let Marker::Numbered(number) = &first.marker else { return owned(lines) };
+    let mut expected = count(number) + 1;
+    let mut to = to;
     let mut counting = true;
     let mut counted = vec![lines[0].to_string()];
     for line in &lines[1..] {
@@ -202,14 +215,15 @@ pub fn counted_on(lines: &[&str]) -> Vec<String> {
             Marker::Numbered(number)
                 if prefix.indent == first.indent && prefix.quote == first.quote =>
             {
-                (count(number) == taken).then(|| next_number(number))
+                (count(number) == expected).then(|| numbered(number, to))
             }
             _ => None,
         };
         counting &= nested || sibling.is_some();
         match sibling.filter(|_| counting) {
             Some(marker) => {
-                taken += 1;
+                expected += 1;
+                to += 1;
                 counted.push(format!("{}{marker}{}", head(line, &prefix), body(line, &prefix)));
             }
             None => counted.push(line.to_string()),
@@ -218,11 +232,20 @@ pub fn counted_on(lines: &[&str]) -> Vec<String> {
     counted
 }
 
+fn owned(lines: &[&str]) -> Vec<String> {
+    lines.iter().map(|line| line.to_string()).collect()
+}
+
 /// `3.` after `2.`, keeping whichever of `.` and `)` the writer was using. A number too
 /// long to count with starts again at one rather than overflowing.
 fn next_number(number: &str) -> String {
+    numbered(number, count(number) + 1)
+}
+
+/// The marker `number` was, counting `value` instead.
+fn numbered(number: &str, value: u32) -> String {
     let (_, punctuation) = number.split_at(number.len() - 1);
-    format!("{}{punctuation} ", count(number) + 1)
+    format!("{value}{punctuation} ")
 }
 
 /// What `3.` counts to.

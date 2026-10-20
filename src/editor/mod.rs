@@ -212,14 +212,15 @@ impl Editor {
         }
         match self.active.item() {
             Some(item) if !item.empty => {
+                self.active.rewrite_below(marks::moved_down);
                 self.active.insert(&format!("\n{}", item.next));
-                self.active.count_on();
                 self.record_edit();
                 return;
             }
             // The empty item goes, and what is left of the block is broken off below it
             // the way any other Enter at the end of a line would break it.
             Some(item) => {
+                self.active.rewrite_below(marks::restarted);
                 self.active.end_item(&item);
                 if !self.active.ends_block() {
                     self.record_edit();

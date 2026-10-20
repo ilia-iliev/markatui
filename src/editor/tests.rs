@@ -283,6 +283,16 @@ fn counts_on_the_items_under_a_new_one() {
     assert_eq!(texts(&editor), ["1. one\n2. \n1. two"]);
 }
 
+/// An empty item in the middle ends the list there, and the items under it are a list
+/// of their own that counts from one.
+#[test]
+fn starts_the_items_under_an_ended_list_at_one() {
+    let mut editor = document("1. one\n2. \n3. three\n   - under\n4. four");
+    editor.activate(0, 10);
+    editor.enter();
+    assert_eq!(texts(&editor), ["1. one", "\n1. three\n   - under\n2. four"]);
+}
+
 /// The one empty item goes and nothing is broken off: there is no line above it to
 /// break away from.
 #[test]
