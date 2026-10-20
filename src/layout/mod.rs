@@ -524,6 +524,21 @@ mod tests {
         assert_eq!(drawn(&laid_out(source, Some(0), 40))[0], "|| a | bb |");
     }
 
+    /// A cell's words read as they do anywhere else: bold is bold, and the stars that
+    /// make it so take no column.
+    #[test]
+    fn draws_the_markup_inside_a_table_cell() {
+        let source = "| a | b |\n| - | - |\n| **1** | 2 |";
+        let layout = laid_out(source, None, 40);
+        assert_eq!(
+            drawn(&layout),
+            ["┌───┬───┐", "│ a │ b │", "├───┼───┤", "│ 1 │ 2 │", "└───┴───┘"]
+        );
+        let one = layout.rows[3].cells.iter().find(|cell| cell.text == "1").expect("drawn");
+        assert!(one.bits & style::BOLD != 0);
+        assert_eq!(one.source, Some(24));
+    }
+
     /// Reading mode keeps a table drawn as one under the cursor, and the caret still has
     /// to stand somewhere in it.
     #[test]
